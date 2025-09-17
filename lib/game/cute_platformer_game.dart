@@ -17,6 +17,7 @@ class LevelDefinition {
     required this.platforms,
     required this.starPlacements,
     this.floatingFriends = const [],
+    this.baddies = const [],
   });
 
   final Vector2 size;
@@ -24,6 +25,7 @@ class LevelDefinition {
   final List<PlatformSpec> platforms;
   final List<StarPlacement> starPlacements;
   final List<FloatingFriendSpec> floatingFriends;
+  final List<BaddieSpec> baddies;
 }
 
 class PlatformSpec {
@@ -52,6 +54,97 @@ class FloatingFriendSpec {
   final Color color;
   final double amplitude;
   final double speed;
+}
+
+class BaddieSpec {
+  const BaddieSpec._internal({
+    this.position,
+    this.platformIndex,
+    this.horizontalFraction,
+    required this.patrolDistance,
+    required this.speed,
+    required this.color,
+    required this.startMovingRight,
+  }) : assert(
+          patrolDistance >= 0,
+          'patrolDistance must be non-negative',
+        ),
+        assert(
+          horizontalFraction == null ||
+              (horizontalFraction >= 0 && horizontalFraction <= 1),
+          'horizontalFraction must be between 0 and 1',
+        );
+
+  const BaddieSpec.absolute({
+    required Vector2 position,
+    double patrolDistance = 120,
+    double speed = 70,
+    Color color = const Color(0xFFFFB4A2),
+    bool startMovingRight = true,
+  }) : this._internal(
+          position: position,
+          patrolDistance: patrolDistance,
+          speed: speed,
+          color: color,
+          startMovingRight: startMovingRight,
+        );
+
+  const BaddieSpec.onPlatform(
+    int platformIndex, {
+    double horizontalFraction = 0.5,
+    double patrolDistance = 120,
+    double speed = 70,
+    Color color = const Color(0xFFFFB4A2),
+    bool startMovingRight = true,
+  }) : this._internal(
+          platformIndex: platformIndex,
+          horizontalFraction: horizontalFraction,
+          patrolDistance: patrolDistance,
+          speed: speed,
+          color: color,
+          startMovingRight: startMovingRight,
+        );
+
+  final Vector2? position;
+  final int? platformIndex;
+  final double? horizontalFraction;
+  final double patrolDistance;
+  final double speed;
+  final Color color;
+  final bool startMovingRight;
+
+  Vector2 resolvePosition(
+    List<PlatformSpec> platforms,
+    Vector2 levelSize,
+  ) {
+    if (position != null) {
+      final resolved = position!.clone();
+      resolved.x = resolved.x
+          .clamp(0, levelSize.x - Baddie.bodyWidth)
+          .toDouble();
+      resolved.y = resolved.y
+          .clamp(0, levelSize.y - Baddie.bodyHeight)
+          .toDouble();
+      return resolved;
+    }
+
+    assert(
+      platformIndex != null &&
+          platformIndex! >= 0 &&
+          platformIndex! < platforms.length,
+      'Baddie spec references an invalid platform index.',
+    );
+    final platform = platforms[platformIndex!];
+    final centerX = platform.position.x +
+        platform.size.x * (horizontalFraction ?? 0.5);
+    final x = (centerX - Baddie.bodyWidth / 2)
+        .clamp(0, levelSize.x - Baddie.bodyWidth)
+        .toDouble();
+    final y = (platform.position.y - Baddie.bodyHeight)
+        .clamp(0, levelSize.y - Baddie.bodyHeight)
+        .toDouble();
+    return Vector2(x, y);
+  }
 }
 
 class CameraTarget extends PositionComponent {
@@ -150,6 +243,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   late final Player _player;
   final List<PlatformBlock> _platforms = [];
   final List<FloatingFriend> _floatingFriends = [];
+  final List<Baddie> _baddies = [];
   List<Vector2> _starSpawns = [];
   late Rect _levelBounds;
   PastelBackground? _background;
@@ -214,6 +308,23 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           color: const Color(0xFFFFE3E3),
           amplitude: 10,
           speed: 0.8,
+        ),
+      ],
+      baddies: const [
+        BaddieSpec.onPlatform(
+          1,
+          horizontalFraction: 0.6,
+          patrolDistance: 120,
+          speed: 70,
+          color: Color(0xFFFFB4A2),
+        ),
+        BaddieSpec.onPlatform(
+          3,
+          horizontalFraction: 0.4,
+          patrolDistance: 150,
+          speed: 80,
+          color: Color(0xFFFF99AC),
+          startMovingRight: false,
         ),
       ],
     ),
@@ -284,6 +395,30 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           color: const Color(0xFFFFD6FF),
           amplitude: 10,
           speed: 0.9,
+        ),
+      ],
+      baddies: const [
+        BaddieSpec.onPlatform(
+          2,
+          horizontalFraction: 0.3,
+          patrolDistance: 140,
+          speed: 75,
+          color: Color(0xFFFFB3C6),
+        ),
+        BaddieSpec.onPlatform(
+          4,
+          horizontalFraction: 0.7,
+          patrolDistance: 160,
+          speed: 85,
+          color: Color(0xFFFFA69E),
+        ),
+        BaddieSpec.onPlatform(
+          6,
+          horizontalFraction: 0.5,
+          patrolDistance: 110,
+          speed: 80,
+          color: Color(0xFFFB8A72),
+          startMovingRight: false,
         ),
       ],
     ),
@@ -362,6 +497,37 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           speed: 1.3,
         ),
       ],
+      baddies: const [
+        BaddieSpec.onPlatform(
+          1,
+          horizontalFraction: 0.5,
+          patrolDistance: 160,
+          speed: 80,
+          color: Color(0xFFFFB5A7),
+        ),
+        BaddieSpec.onPlatform(
+          3,
+          horizontalFraction: 0.35,
+          patrolDistance: 160,
+          speed: 90,
+          color: Color(0xFFFFA69E),
+        ),
+        BaddieSpec.onPlatform(
+          5,
+          horizontalFraction: 0.55,
+          patrolDistance: 180,
+          speed: 95,
+          color: Color(0xFFFF8FAB),
+        ),
+        BaddieSpec.onPlatform(
+          7,
+          horizontalFraction: 0.4,
+          patrolDistance: 140,
+          speed: 90,
+          color: Color(0xFFFFB3C6),
+          startMovingRight: false,
+        ),
+      ],
     ),
   ];
 
@@ -372,6 +538,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
 
   Rect get levelBounds => _levelBounds;
   List<PlatformBlock> get platforms => _platforms;
+  List<Baddie> get baddies => _baddies;
   double get horizontalDirection =>
       _buttonDirection != 0 ? _buttonDirection : _keyboardDirection;
   int get totalStars => _starSpawns.length;
@@ -446,6 +613,18 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
     }
     await world.addAll(_floatingFriends);
 
+    for (final spec in level.baddies) {
+      final baddie = Baddie(
+        start: spec.resolvePosition(level.platforms, level.size),
+        patrolDistance: spec.patrolDistance,
+        speed: spec.speed,
+        color: spec.color,
+        startMovingRight: spec.startMovingRight,
+      );
+      _baddies.add(baddie);
+    }
+    await world.addAll(_baddies);
+
     if (!_playerAdded) {
       _player = Player(spawnPoint: level.playerSpawn.clone());
       await world.add(_player);
@@ -483,6 +662,11 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
       friend.removeFromParent();
     }
     _floatingFriends.clear();
+
+    for (final baddie in _baddies) {
+      baddie.removeFromParent();
+    }
+    _baddies.clear();
 
     for (final star in world.children.whereType<Star>().toList()) {
       star.removeFromParent();
@@ -573,6 +757,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   void update(double dt) {
     super.update(dt);
     _player.horizontalInput = horizontalDirection;
+    _handleEnemyInteractions();
   }
 
   @override
@@ -609,6 +794,42 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
     }
     _keyboardDirection = direction.clamp(-1, 1);
   }
+
+  void _handleEnemyInteractions() {
+    for (final baddie in _baddies) {
+      if (!baddie.isActive) {
+        continue;
+      }
+
+      if (!_player.bounds.overlaps(baddie.bounds)) {
+        continue;
+      }
+
+      final enemyBounds = baddie.bounds;
+      final wasAbove =
+          _player.previousBottom <= enemyBounds.top + 4; // small tolerance
+      final isFalling = _player.verticalVelocity >= 0;
+
+      if (wasAbove && isFalling) {
+        baddie.defeat();
+        _player.bounceFromEnemy(enemyBounds.top);
+        world.add(
+          FloatingText(
+            text: 'Boop!',
+            position: Vector2(
+              enemyBounds.center.dx,
+              enemyBounds.top - 20,
+            ),
+            color: const Color(0xFFFFC857),
+          ),
+        );
+      } else {
+        _player.respawn();
+      }
+
+      break;
+    }
+  }
 }
 
 class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
@@ -621,6 +842,7 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
 
   final Vector2 _spawnPoint;
   final Vector2 _velocity = Vector2.zero();
+  final Vector2 _previousPosition = Vector2.zero();
   double horizontalInput = 0;
   bool _isOnGround = false;
 
@@ -633,6 +855,8 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   final Paint _eyePaint = Paint()..color = const Color(0xFF1D3557);
 
   Rect get bounds => Rect.fromLTWH(position.x, position.y, size.x, size.y);
+  double get previousBottom => _previousPosition.y + size.y;
+  double get verticalVelocity => _velocity.y;
 
   @override
   void render(Canvas canvas) {
@@ -670,6 +894,7 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
 
   @override
   void update(double dt) {
+    _previousPosition.setFrom(position);
     super.update(dt);
     _applyPhysics(dt);
     _keepWithinBounds();
@@ -684,12 +909,19 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
 
   void respawn() {
     position.setFrom(_spawnPoint);
+    _previousPosition.setFrom(_spawnPoint);
     _velocity.setZero();
     _isOnGround = false;
   }
 
   void setSpawnPoint(Vector2 spawnPoint) {
     _spawnPoint.setFrom(spawnPoint);
+  }
+
+  void bounceFromEnemy(double surfaceY) {
+    position.y = surfaceY - size.y;
+    _velocity.y = -_jumpSpeed * 0.6;
+    _isOnGround = false;
   }
 
   void _applyPhysics(double dt) {
@@ -874,6 +1106,171 @@ class Star extends PositionComponent
         EffectController(duration: 0.25),
       ),
     );
+  }
+}
+
+class Baddie extends PositionComponent
+    with HasGameRef<CutePlatformerGame>
+    implements OpacityProvider {
+  Baddie({
+    required Vector2 start,
+    required this.patrolDistance,
+    required this.speed,
+    required this.color,
+    this.startMovingRight = true,
+  })  : _originX = start.x,
+        _originY = start.y,
+        super(
+          position: start.clone(),
+          size: Vector2(bodyWidth, bodyHeight),
+          priority: 1,
+        ) {
+    _direction = startMovingRight ? 1 : -1;
+    _updatePaints();
+  }
+
+  static const double bodyWidth = 46;
+  static const double bodyHeight = 36;
+
+  final double patrolDistance;
+  final double speed;
+  final Color color;
+  final bool startMovingRight;
+
+  final double _originX;
+  final double _originY;
+  double _direction = 1;
+  bool _defeated = false;
+  double _opacity = 1;
+
+  late double _minX;
+  late double _maxX;
+
+  final Paint _bodyPaint = Paint();
+  final Paint _eyePaint = Paint()..style = PaintingStyle.fill;
+  final Paint _cheekPaint = Paint()..style = PaintingStyle.fill;
+  final Paint _mouthPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2;
+
+  bool get isActive => !_defeated && !isRemoving;
+
+  Rect get bounds => Rect.fromLTWH(position.x, position.y, size.x, size.y);
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+  }
+
+  @override
+  void onMount() {
+    super.onMount();
+    final bounds = gameRef.levelBounds;
+    final levelLeft = bounds.left;
+    final levelRight = bounds.right - size.x;
+    _minX = math.max(levelLeft, _originX);
+    _maxX = math.min(levelRight, _originX + patrolDistance);
+    if (_maxX < _minX) {
+      final anchor = math.max(bounds.left, math.min(_originX, levelRight));
+      _minX = anchor;
+      _maxX = anchor;
+    }
+
+    position.x = position.x.clamp(_minX, _maxX).toDouble();
+    final levelBottom = bounds.bottom - size.y;
+    position.y = _originY.clamp(bounds.top, levelBottom).toDouble();
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (_defeated || speed <= 0) {
+      return;
+    }
+    if ((_maxX - _minX).abs() <= 0.01) {
+      position.x = _minX;
+      return;
+    }
+
+    final nextX = position.x + _direction * speed * dt;
+    if (nextX <= _minX) {
+      position.x = _minX;
+      _direction = 1;
+    } else if (nextX >= _maxX) {
+      position.x = _maxX;
+      _direction = -1;
+    } else {
+      position.x = nextX;
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    final body = RRect.fromRectAndRadius(
+      Offset.zero & Size(size.x, size.y),
+      const Radius.circular(12),
+    );
+    canvas.drawRRect(body, _bodyPaint);
+
+    final eyeY = size.y * 0.4;
+    final eyeRadius = 4.0;
+    canvas.drawCircle(Offset(size.x * 0.32, eyeY), eyeRadius, _eyePaint);
+    canvas.drawCircle(Offset(size.x * 0.68, eyeY), eyeRadius, _eyePaint);
+
+    final cheekY = size.y * 0.62;
+    final cheekRadius = 4.5;
+    canvas.drawCircle(Offset(size.x * 0.28, cheekY), cheekRadius, _cheekPaint);
+    canvas.drawCircle(Offset(size.x * 0.72, cheekY), cheekRadius, _cheekPaint);
+
+    final mouthPath = Path()
+      ..moveTo(size.x * 0.34, size.y * 0.72)
+      ..quadraticBezierTo(
+        size.x * 0.5,
+        size.y * 0.8,
+        size.x * 0.66,
+        size.y * 0.72,
+      );
+    canvas.drawPath(mouthPath, _mouthPaint);
+  }
+
+  @override
+  double get opacity => _opacity;
+
+  @override
+  set opacity(double value) {
+    _opacity = value.clamp(0, 1);
+    _updatePaints();
+  }
+
+  void defeat() {
+    if (_defeated) {
+      return;
+    }
+    _defeated = true;
+    _direction = 0;
+    add(
+      OpacityEffect.to(
+        0,
+        EffectController(duration: 0.25),
+        onComplete: removeFromParent,
+      ),
+    );
+    add(
+      ScaleEffect.to(
+        Vector2.all(0.4),
+        EffectController(duration: 0.25),
+      ),
+    );
+  }
+
+  void _updatePaints() {
+    _bodyPaint.color = color.withValues(alpha: _opacity);
+    _eyePaint.color = const Color(0xFF1D3557).withValues(alpha: _opacity);
+    _cheekPaint.color = const Color(0xFFFFD6E0).withValues(alpha: _opacity);
+    _mouthPaint
+      ..color = const Color(0xFF1D3557).withValues(alpha: _opacity)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
   }
 }
 
