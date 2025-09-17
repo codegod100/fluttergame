@@ -39,7 +39,7 @@ class _CuteHudState extends State<CuteHud> {
                     margin: const EdgeInsets.only(top: 16),
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.8),
+                      color: Colors.white.withValues(alpha: 0.8),
                       borderRadius: BorderRadius.circular(18),
                       boxShadow: const [
                         BoxShadow(
@@ -50,7 +50,7 @@ class _CuteHudState extends State<CuteHud> {
                       ],
                     ),
                     child: Text(
-                      'Stars: $score / ${widget.game.totalStars}',
+                      'Level ${widget.game.currentLevel + 1}/${widget.game.levelCount} • Stars: $score / ${widget.game.totalStars}',
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w600,
@@ -70,8 +70,30 @@ class _CuteHudState extends State<CuteHud> {
               child: ValueListenableBuilder<int>(
                 valueListenable: widget.game.score,
                 builder: (_, score, __) {
-                  if (score < widget.game.totalStars) {
+                  final totalStars = widget.game.totalStars;
+                  if (totalStars == 0 || score < totalStars) {
                     return const SizedBox.shrink();
+                  }
+                  final isLastLevel =
+                      widget.game.currentLevel >= widget.game.levelCount - 1;
+                  if (!isLastLevel) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFB388EB).withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: const Text(
+                        'Level complete! Next stage is on the way...'
+                        '\n(Press R to restart if you need a do-over)',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    );
                   }
                   return Column(
                     mainAxisSize: MainAxisSize.min,
@@ -79,11 +101,12 @@ class _CuteHudState extends State<CuteHud> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFB388EB).withOpacity(0.9),
+                          color: const Color(0xFFB388EB).withValues(alpha: 0.9),
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: const Text(
-                          'You did it! Press R or tap reset to play again.',
+                          'All levels complete! Press R or tap restart to begin again.',
+                          textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 16,
@@ -93,7 +116,9 @@ class _CuteHudState extends State<CuteHud> {
                       ),
                       const SizedBox(height: 12),
                       FilledButton(
-                        onPressed: widget.game.resetLevel,
+                        onPressed: () {
+                          widget.game.resetLevel();
+                        },
                         style: FilledButton.styleFrom(
                           backgroundColor: const Color(0xFF5E60CE),
                           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -101,7 +126,7 @@ class _CuteHudState extends State<CuteHud> {
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        child: const Text('Reset Stage'),
+                        child: const Text('Restart Adventure'),
                       ),
                     ],
                   );
@@ -113,42 +138,90 @@ class _CuteHudState extends State<CuteHud> {
             alignment: Alignment.bottomCenter,
             child: SafeArea(
               minimum: const EdgeInsets.only(bottom: 24, left: 24, right: 24),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isCompact = constraints.maxWidth < 360;
+                  if (isCompact) {
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _ControlButton(
+                              label: '<',
+                              pressed: _leftDown,
+                              onChanged: (value) {
+                                setState(() => _leftDown = value);
+                                widget.game.setLeftPressed(value);
+                              },
+                            ),
+                            const SizedBox(width: 16),
+                            _ControlButton(
+                              label: '>',
+                              pressed: _rightDown,
+                              onChanged: (value) {
+                                setState(() => _rightDown = value);
+                                widget.game.setRightPressed(value);
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        _ControlButton(
+                          label: 'Jump',
+                          pressed: _jumpDown,
+                          wide: true,
+                          onChanged: (value) {
+                            setState(() => _jumpDown = value);
+                            if (value) {
+                              widget.game.triggerJump();
+                            }
+                          },
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      _ControlButton(
-                        label: '<',
-                        pressed: _leftDown,
-                        onChanged: (value) {
-                          setState(() => _leftDown = value);
-                          widget.game.setLeftPressed(value);
-                        },
+                      Row(
+                        children: [
+                          _ControlButton(
+                            label: '<',
+                            pressed: _leftDown,
+                            onChanged: (value) {
+                              setState(() => _leftDown = value);
+                              widget.game.setLeftPressed(value);
+                            },
+                          ),
+                          const SizedBox(width: 16),
+                          _ControlButton(
+                            label: '>',
+                            pressed: _rightDown,
+                            onChanged: (value) {
+                              setState(() => _rightDown = value);
+                              widget.game.setRightPressed(value);
+                            },
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 16),
                       _ControlButton(
-                        label: '>',
-                        pressed: _rightDown,
+                        label: 'Jump',
+                        pressed: _jumpDown,
+                        wide: true,
                         onChanged: (value) {
-                          setState(() => _rightDown = value);
-                          widget.game.setRightPressed(value);
+                          setState(() => _jumpDown = value);
+                          if (value) {
+                            widget.game.triggerJump();
+                          }
                         },
                       ),
                     ],
-                  ),
-                  _ControlButton(
-                    label: 'Jump',
-                    pressed: _jumpDown,
-                    wide: true,
-                    onChanged: (value) {
-                      setState(() => _jumpDown = value);
-                      if (value) {
-                        widget.game.triggerJump();
-                      }
-                    },
-                  ),
-                ],
+                  );
+                },
               ),
             ),
           ),

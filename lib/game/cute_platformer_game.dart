@@ -1,6 +1,6 @@
+import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flame/camera.dart';
 import 'package:flame/camera.dart';
 import 'package:flame/components.dart';
 import 'package:flame/effects.dart';
@@ -10,18 +10,360 @@ import 'package:flame/input.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+class LevelDefinition {
+  const LevelDefinition({
+    required this.size,
+    required this.playerSpawn,
+    required this.platforms,
+    required this.starPlacements,
+    this.floatingFriends = const [],
+  });
+
+  final Vector2 size;
+  final Vector2 playerSpawn;
+  final List<PlatformSpec> platforms;
+  final List<StarPlacement> starPlacements;
+  final List<FloatingFriendSpec> floatingFriends;
+}
+
+class PlatformSpec {
+  const PlatformSpec({
+    required this.position,
+    required this.size,
+    required this.color,
+    this.priority,
+  });
+
+  final Vector2 position;
+  final Vector2 size;
+  final Color color;
+  final int? priority;
+}
+
+class FloatingFriendSpec {
+  const FloatingFriendSpec({
+    required this.position,
+    required this.color,
+    required this.amplitude,
+    required this.speed,
+  });
+
+  final Vector2 position;
+  final Color color;
+  final double amplitude;
+  final double speed;
+}
+
+class CameraTarget extends PositionComponent {
+  CameraTarget(this._player)
+      : super(
+          position: Vector2(
+            _player.position.x + _player.size.x / 2,
+            _player.position.y + _player.size.y / 2,
+          ),
+          size: Vector2.zero(),
+        );
+
+  final Player _player;
+
+  Vector2 _playerCenter() => Vector2(
+        _player.position.x + _player.size.x / 2,
+        _player.position.y + _player.size.y / 2,
+      );
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    position.setFrom(_playerCenter());
+  }
+}
+
+class StarPlacement {
+  const StarPlacement._internal({
+    this.position,
+    this.platformIndex,
+    this.horizontalFraction = 0.5,
+    this.heightOffset = 70,
+  }) : assert(
+          horizontalFraction >= 0 && horizontalFraction <= 1,
+          'horizontalFraction must be between 0 and 1',
+        );
+
+  const StarPlacement.absolute(Vector2 position)
+      : this._internal(position: position);
+
+  const StarPlacement.abovePlatform(
+    int platformIndex, {
+    double horizontalFraction = 0.5,
+    double heightOffset = 70,
+  }) : this._internal(
+          platformIndex: platformIndex,
+          horizontalFraction: horizontalFraction,
+          heightOffset: heightOffset,
+        );
+
+  final Vector2? position;
+  final int? platformIndex;
+  final double horizontalFraction;
+  final double heightOffset;
+
+  Vector2 resolve(List<PlatformSpec> platforms, Vector2 levelSize) {
+    if (position != null) {
+      final resolved = position!.clone();
+      final halfSize = 15.0;
+      resolved.x = resolved.x
+          .clamp(halfSize, levelSize.x - halfSize)
+          .toDouble();
+      resolved.y = resolved.y
+          .clamp(halfSize, levelSize.y - halfSize)
+          .toDouble();
+      return resolved;
+    }
+    assert(
+      platformIndex != null &&
+          platformIndex! >= 0 &&
+          platformIndex! < platforms.length,
+      'Star placement references an invalid platform index.',
+    );
+    final platform = platforms[platformIndex!];
+    final x = platform.position.x + platform.size.x * horizontalFraction;
+    final y = platform.position.y - heightOffset;
+    final halfSize = 15.0;
+    return Vector2(
+      x.clamp(halfSize, levelSize.x - halfSize).toDouble(),
+      y.clamp(halfSize, levelSize.y - halfSize).toDouble(),
+    );
+  }
+}
+
 class CutePlatformerGame extends FlameGame with KeyboardEvents {
   CutePlatformerGame()
       : score = ValueNotifier<int>(0),
         gravity = Vector2(0, 900);
+
+  static const double _viewportWidth = 800;
+  static const double _viewportHeight = 480;
 
   final ValueNotifier<int> score;
   final Vector2 gravity;
 
   late final Player _player;
   final List<PlatformBlock> _platforms = [];
-  late final List<Vector2> _starSpawns;
+  final List<FloatingFriend> _floatingFriends = [];
+  List<Vector2> _starSpawns = [];
   late Rect _levelBounds;
+  PastelBackground? _background;
+  int _currentLevelIndex = 0;
+  bool _playerAdded = false;
+  bool _levelTransitionPending = false;
+  CameraTarget? _cameraTarget;
+
+  final List<LevelDefinition> _levels = [
+    LevelDefinition(
+      size: Vector2(1600, 600),
+      playerSpawn: Vector2(100, 480),
+      platforms: [
+        PlatformSpec(
+          position: Vector2(0, 544),
+          size: Vector2(1600, 56),
+          color: const Color(0xFFBEE3DB),
+          priority: -2,
+        ),
+        PlatformSpec(
+          position: Vector2(140, 440),
+          size: Vector2(220, 32),
+          color: const Color(0xFFF0A6CA),
+        ),
+        PlatformSpec(
+          position: Vector2(430, 350),
+          size: Vector2(160, 28),
+          color: const Color(0xFF9AD0EC),
+        ),
+        PlatformSpec(
+          position: Vector2(680, 390),
+          size: Vector2(220, 30),
+          color: const Color(0xFFFFD6BA),
+        ),
+        PlatformSpec(
+          position: Vector2(960, 280),
+          size: Vector2(180, 28),
+          color: const Color(0xFFCAFFBF),
+        ),
+        PlatformSpec(
+          position: Vector2(1230, 380),
+          size: Vector2(200, 32),
+          color: const Color(0xFFFDE2E4),
+        ),
+      ],
+      starPlacements: const [
+        StarPlacement.abovePlatform(1, horizontalFraction: 0.4, heightOffset: 80),
+        StarPlacement.abovePlatform(2, horizontalFraction: 0.6, heightOffset: 80),
+        StarPlacement.abovePlatform(3, horizontalFraction: 0.45, heightOffset: 80),
+        StarPlacement.abovePlatform(4, horizontalFraction: 0.55, heightOffset: 90),
+        StarPlacement.abovePlatform(5, horizontalFraction: 0.7, heightOffset: 80),
+      ],
+      floatingFriends: [
+        FloatingFriendSpec(
+          position: Vector2(360, 490),
+          color: const Color(0xFF8EECF5),
+          amplitude: 8,
+          speed: 1.2,
+        ),
+        FloatingFriendSpec(
+          position: Vector2(880, 450),
+          color: const Color(0xFFFFE3E3),
+          amplitude: 10,
+          speed: 0.8,
+        ),
+      ],
+    ),
+    LevelDefinition(
+      size: Vector2(1800, 640),
+      playerSpawn: Vector2(140, 500),
+      platforms: [
+        PlatformSpec(
+          position: Vector2(0, 584),
+          size: Vector2(1800, 56),
+          color: const Color(0xFFF4F1DE),
+          priority: -2,
+        ),
+        PlatformSpec(
+          position: Vector2(220, 500),
+          size: Vector2(220, 30),
+          color: const Color(0xFFFFC8DD),
+        ),
+        PlatformSpec(
+          position: Vector2(520, 440),
+          size: Vector2(200, 28),
+          color: const Color(0xFFA0C4FF),
+        ),
+        PlatformSpec(
+          position: Vector2(820, 380),
+          size: Vector2(220, 28),
+          color: const Color(0xFFBDE0FE),
+        ),
+        PlatformSpec(
+          position: Vector2(1100, 320),
+          size: Vector2(220, 30),
+          color: const Color(0xFFCDB4DB),
+        ),
+        PlatformSpec(
+          position: Vector2(1420, 260),
+          size: Vector2(220, 30),
+          color: const Color(0xFFFFF1E6),
+        ),
+        PlatformSpec(
+          position: Vector2(1620, 430),
+          size: Vector2(160, 28),
+          color: const Color(0xFFB9FBC0),
+        ),
+      ],
+      starPlacements: const [
+        StarPlacement.abovePlatform(1, horizontalFraction: 0.5, heightOffset: 80),
+        StarPlacement.abovePlatform(2, horizontalFraction: 0.65, heightOffset: 80),
+        StarPlacement.abovePlatform(3, horizontalFraction: 0.35, heightOffset: 80),
+        StarPlacement.abovePlatform(4, horizontalFraction: 0.7, heightOffset: 85),
+        StarPlacement.abovePlatform(5, horizontalFraction: 0.5, heightOffset: 90),
+        StarPlacement.abovePlatform(6, horizontalFraction: 0.5, heightOffset: 80),
+      ],
+      floatingFriends: [
+        FloatingFriendSpec(
+          position: Vector2(460, 520),
+          color: const Color(0xFFFAE1DD),
+          amplitude: 12,
+          speed: 1.0,
+        ),
+        FloatingFriendSpec(
+          position: Vector2(1040, 420),
+          color: const Color(0xFFCCD5AE),
+          amplitude: 14,
+          speed: 1.1,
+        ),
+        FloatingFriendSpec(
+          position: Vector2(1520, 360),
+          color: const Color(0xFFFFD6FF),
+          amplitude: 10,
+          speed: 0.9,
+        ),
+      ],
+    ),
+    LevelDefinition(
+      size: Vector2(2000, 680),
+      playerSpawn: Vector2(120, 520),
+      platforms: [
+        PlatformSpec(
+          position: Vector2(0, 624),
+          size: Vector2(2000, 56),
+          color: const Color(0xFFE6F4EA),
+          priority: -2,
+        ),
+        PlatformSpec(
+          position: Vector2(220, 520),
+          size: Vector2(220, 30),
+          color: const Color(0xFFFDFFB6),
+        ),
+        PlatformSpec(
+          position: Vector2(520, 450),
+          size: Vector2(200, 28),
+          color: const Color(0xFFFFA69E),
+        ),
+        PlatformSpec(
+          position: Vector2(820, 380),
+          size: Vector2(220, 28),
+          color: const Color(0xFF9BF6FF),
+        ),
+        PlatformSpec(
+          position: Vector2(1120, 320),
+          size: Vector2(220, 30),
+          color: const Color(0xFFBDB2FF),
+        ),
+        PlatformSpec(
+          position: Vector2(1400, 260),
+          size: Vector2(220, 28),
+          color: const Color(0xFFFFE066),
+        ),
+        PlatformSpec(
+          position: Vector2(1680, 320),
+          size: Vector2(190, 28),
+          color: const Color(0xFFD0F4DE),
+        ),
+        PlatformSpec(
+          position: Vector2(1840, 460),
+          size: Vector2(160, 32),
+          color: const Color(0xFFFFC6FF),
+        ),
+      ],
+      starPlacements: const [
+        StarPlacement.abovePlatform(1, horizontalFraction: 0.45, heightOffset: 85),
+        StarPlacement.abovePlatform(2, horizontalFraction: 0.6, heightOffset: 85),
+        StarPlacement.abovePlatform(3, horizontalFraction: 0.4, heightOffset: 90),
+        StarPlacement.abovePlatform(4, horizontalFraction: 0.7, heightOffset: 95),
+        StarPlacement.abovePlatform(5, horizontalFraction: 0.5, heightOffset: 100),
+        StarPlacement.abovePlatform(6, horizontalFraction: 0.4, heightOffset: 90),
+        StarPlacement.abovePlatform(7, horizontalFraction: 0.6, heightOffset: 85),
+      ],
+      floatingFriends: [
+        FloatingFriendSpec(
+          position: Vector2(520, 560),
+          color: const Color(0xFFFFE5EC),
+          amplitude: 12,
+          speed: 1.2,
+        ),
+        FloatingFriendSpec(
+          position: Vector2(1080, 440),
+          color: const Color(0xFFEDE7B1),
+          amplitude: 16,
+          speed: 1.0,
+        ),
+        FloatingFriendSpec(
+          position: Vector2(1640, 360),
+          color: const Color(0xFFBEE1E6),
+          amplitude: 14,
+          speed: 1.3,
+        ),
+      ],
+    ),
+  ];
 
   double _keyboardDirection = 0;
   bool _leftButtonDown = false;
@@ -35,6 +377,8 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   int get totalStars => _starSpawns.length;
   bool get hasFinishedLevel => score.value >= totalStars;
   Player get player => _player;
+  int get currentLevel => _currentLevelIndex;
+  int get levelCount => _levels.length;
 
   static final _movementKeys = <LogicalKeyboardKey>{
     LogicalKeyboardKey.arrowLeft,
@@ -53,110 +397,120 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   Future<void> onLoad() async {
     await super.onLoad();
 
-    camera.viewport = FixedResolutionViewport(resolution: Vector2(800, 480));
+    camera.viewport = FixedResolutionViewport(
+      resolution: Vector2(_viewportWidth, _viewportHeight),
+    );
+    camera.viewfinder.zoom = 1;
 
-    const levelWidth = 1600.0;
-    const levelHeight = 600.0;
-    _levelBounds = const Rect.fromLTWH(0, 0, levelWidth, levelHeight);
+    await _loadLevel(0);
+  }
 
-    add(PastelBackground(levelSize: Vector2(levelWidth, levelHeight)));
+  Future<void> _loadLevel(int index) async {
+    _levelTransitionPending = false;
+    _currentLevelIndex = index;
+    final level = _levels[index];
 
-    _platforms.addAll([
-      PlatformBlock(
-        position: Vector2(0, levelHeight - 56),
-        size: Vector2(levelWidth, 56),
-        color: const Color(0xFFBEE3DB),
-        priority: -2,
-      ),
-      PlatformBlock(
-        position: Vector2(140, levelHeight - 160),
-        size: Vector2(220, 32),
-        color: const Color(0xFFF0A6CA),
-      ),
-      PlatformBlock(
-        position: Vector2(430, levelHeight - 250),
-        size: Vector2(160, 28),
-        color: const Color(0xFF9AD0EC),
-      ),
-      PlatformBlock(
-        position: Vector2(680, levelHeight - 210),
-        size: Vector2(220, 30),
-        color: const Color(0xFFFFD6BA),
-      ),
-      PlatformBlock(
-        position: Vector2(960, levelHeight - 320),
-        size: Vector2(180, 28),
-        color: const Color(0xFFCAFFBF),
-      ),
-      PlatformBlock(
-        position: Vector2(1230, levelHeight - 220),
-        size: Vector2(200, 32),
-        color: const Color(0xFFFDE2E4),
-      ),
-    ]);
+    _levelBounds = Rect.fromLTWH(0, 0, level.size.x, level.size.y);
 
-    await addAll(_platforms);
+    _clearLevel();
+    score.value = 0;
 
-    _player = Player(spawnPoint: Vector2(100, levelHeight - 120));
-    await add(_player);
+    _background?.removeFromParent();
+    _background = PastelBackground(levelSize: level.size.clone());
+    await world.add(_background!);
 
-    camera.follow(_player);
-    _applyCameraBounds(levelWidth: levelWidth, levelHeight: levelHeight);
+    for (final platformSpec in level.platforms) {
+      final block = PlatformBlock(
+        position: platformSpec.position.clone(),
+        size: platformSpec.size.clone(),
+        color: platformSpec.color,
+        priority: platformSpec.priority,
+      );
+      _platforms.add(block);
+    }
+    await world.addAll(_platforms);
 
-    _starSpawns = [
-      Vector2(220, levelHeight - 210),
-      Vector2(520, levelHeight - 300),
-      Vector2(760, levelHeight - 260),
-      Vector2(1020, levelHeight - 360),
-      Vector2(1340, levelHeight - 260),
-    ];
+    _starSpawns = level.starPlacements
+        .map((placement) => placement.resolve(level.platforms, level.size))
+        .toList(growable: false);
     _spawnStars();
 
-    addAll([
-      FloatingFriend(
-        position: Vector2(360, levelHeight - 110),
-        color: const Color(0xFF8EECF5),
-        amplitude: 8,
-        speed: 1.2,
-      ),
-      FloatingFriend(
-        position: Vector2(880, levelHeight - 150),
-        color: const Color(0xFFFFE3E3),
-        amplitude: 10,
-        speed: 0.8,
-      ),
-    ]);
+    for (final spec in level.floatingFriends) {
+      final friend = FloatingFriend(
+        position: spec.position.clone(),
+        color: spec.color,
+        amplitude: spec.amplitude,
+        speed: spec.speed,
+      );
+      _floatingFriends.add(friend);
+    }
+    await world.addAll(_floatingFriends);
+
+    if (!_playerAdded) {
+      _player = Player(spawnPoint: level.playerSpawn.clone());
+      await world.add(_player);
+      _playerAdded = true;
+    } else {
+      _player.setSpawnPoint(level.playerSpawn);
+      _player.respawn();
+    }
+
+    if (_cameraTarget == null) {
+      _cameraTarget = CameraTarget(_player);
+      await world.add(_cameraTarget!);
+    }
+
+    camera.viewfinder.zoom = 1;
+    camera.stop();
+    camera.setBounds(
+      Rectangle.fromLTWH(0, 0, level.size.x, level.size.y),
+      considerViewport: true,
+    );
+    camera.follow(
+      _cameraTarget!,
+      snap: true,
+      maxSpeed: 1200,
+    );
+  }
+
+  void _clearLevel() {
+    for (final platform in _platforms) {
+      platform.removeFromParent();
+    }
+    _platforms.clear();
+
+    for (final friend in _floatingFriends) {
+      friend.removeFromParent();
+    }
+    _floatingFriends.clear();
+
+    for (final star in world.children.whereType<Star>().toList()) {
+      star.removeFromParent();
+    }
+
+    for (final floatingText in world.children.whereType<FloatingText>().toList()) {
+      floatingText.removeFromParent();
+    }
+  }
+
+  void _queueNextLevel() {
+    if (_levelTransitionPending || _currentLevelIndex >= _levels.length - 1) {
+      return;
+    }
+    _levelTransitionPending = true;
+    final targetIndex = _currentLevelIndex + 1;
+    Future<void>.delayed(const Duration(milliseconds: 900), () async {
+      if (!_levelTransitionPending) {
+        return;
+      }
+      await _loadLevel(targetIndex);
+    });
   }
 
   void _spawnStars() {
     for (final spawn in _starSpawns) {
-      add(Star(position: spawn.clone()));
+      world.add(Star(position: spawn.clone()));
     }
-  }
-
-  void _applyCameraBounds({required double levelWidth, required double levelHeight}) {
-    const halfViewWidth = 400.0;
-    const halfViewHeight = 240.0;
-
-    final minX = levelWidth <= halfViewWidth * 2
-        ? levelWidth / 2
-        : halfViewWidth;
-    final maxX = levelWidth <= halfViewWidth * 2
-        ? levelWidth / 2
-        : levelWidth - halfViewWidth;
-
-    final minY = levelHeight <= halfViewHeight * 2
-        ? levelHeight / 2
-        : halfViewHeight;
-    final maxY = levelHeight <= halfViewHeight * 2
-        ? levelHeight / 2
-        : levelHeight - halfViewHeight;
-
-    camera.viewfinder.add(
-      BoundedPositionBehavior(
-        bounds: Rectangle.fromLTRB(minX, minY, maxX, maxY),
-      ),
-    );
   }
 
   void collectStar(Star star) {
@@ -167,22 +521,27 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
     star.collect();
 
     if (hasFinishedLevel) {
-      add(FloatingText(
-        text: 'All stars collected! \u2728',
+      final isLastLevel = _currentLevelIndex >= _levels.length - 1;
+      world.add(FloatingText(
+        text: isLastLevel
+            ? 'All levels complete! \uD83C\uDF89'
+            : 'Level ${_currentLevelIndex + 1} complete! \u2728',
         position: _player.position.clone() - Vector2(0, 60),
         color: const Color(0xFF5E60CE),
       ));
+
+      if (!isLastLevel) {
+        _queueNextLevel();
+      }
     }
   }
 
-  void resetLevel() {
-    score.value = 0;
-
-    for (final star in children.whereType<Star>().toList()) {
-      star.removeFromParent();
-    }
-    _spawnStars();
-    _player.respawn();
+  Future<void> resetLevel() async {
+    _levelTransitionPending = false;
+    final shouldRestartFromStart =
+        hasFinishedLevel && _currentLevelIndex >= _levels.length - 1;
+    final targetIndex = shouldRestartFromStart ? 0 : _currentLevelIndex;
+    await _loadLevel(targetIndex);
   }
 
   void setLeftPressed(bool pressed) {
@@ -256,7 +615,7 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   Player({required Vector2 spawnPoint})
       : _spawnPoint = spawnPoint.clone(),
         super(
-          position: spawnPoint,
+          position: spawnPoint.clone(),
           size: Vector2.all(52),
         );
 
@@ -266,7 +625,7 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   bool _isOnGround = false;
 
   static const _moveSpeed = 220.0;
-  static const _jumpSpeed = 420.0;
+  static const _jumpSpeed = 520.0;
 
   final Paint _bodyPaint = Paint()..color = const Color(0xFF8ECAE6);
   final Paint _bellyPaint = Paint()..color = const Color(0xFFEFF7F6);
@@ -327,6 +686,10 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
     position.setFrom(_spawnPoint);
     _velocity.setZero();
     _isOnGround = false;
+  }
+
+  void setSpawnPoint(Vector2 spawnPoint) {
+    _spawnPoint.setFrom(spawnPoint);
   }
 
   void _applyPhysics(double dt) {
@@ -410,7 +773,7 @@ class PlatformBlock extends PositionComponent {
     );
 
     final topHighlight = Paint()
-      ..color = Colors.white.withOpacity(0.3)
+      ..color = Colors.white.withValues(alpha: 0.3)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
     canvas.drawLine(
@@ -421,22 +784,46 @@ class PlatformBlock extends PositionComponent {
   }
 }
 
-class Star extends PositionComponent with HasGameRef<CutePlatformerGame> {
+class Star extends PositionComponent
+    with HasGameRef<CutePlatformerGame>
+    implements OpacityProvider {
   Star({required Vector2 position})
       : super(
           position: position,
           size: Vector2.all(30),
-          anchor: Anchor.topLeft,
-        );
+          anchor: Anchor.center,
+        ) {
+    _applyOpacityToPaints();
+  }
 
   bool collected = false;
-  final Paint _fillPaint = Paint()..color = const Color(0xFFFFC857);
+  static const _fillColor = Color(0xFFFFC857);
+  static const _strokeColor = Color(0xFFF4A261);
+  final Paint _fillPaint = Paint();
   final Paint _strokePaint = Paint()
-    ..color = const Color(0xFFF4A261)
     ..style = PaintingStyle.stroke
     ..strokeWidth = 2;
+  double _opacity = 1.0;
 
-  Rect get bounds => Rect.fromLTWH(position.x, position.y, size.x, size.y);
+  Rect get bounds => Rect.fromCenter(
+        center: Offset(position.x, position.y),
+        width: size.x,
+        height: size.y,
+      );
+
+  @override
+  double get opacity => _opacity;
+
+  @override
+  set opacity(double value) {
+    _opacity = value.clamp(0, 1);
+    _applyOpacityToPaints();
+  }
+
+  void _applyOpacityToPaints() {
+    _fillPaint.color = _fillColor.withValues(alpha: _opacity);
+    _strokePaint.color = _strokeColor.withValues(alpha: _opacity);
+  }
 
   @override
   void update(double dt) {
@@ -512,7 +899,7 @@ class PastelBackground extends PositionComponent {
       ).createShader(rect);
     canvas.drawRect(rect, paint);
 
-    final cloudPaint = Paint()..color = Colors.white.withOpacity(0.5);
+    final cloudPaint = Paint()..color = Colors.white.withValues(alpha: 0.5);
     void drawCloud(double x, double y, double scale) {
       final center = Offset(x, y);
       canvas.drawCircle(center + Offset(-20 * scale, 0), 26 * scale, cloudPaint);
@@ -580,12 +967,13 @@ class FloatingFriend extends PositionComponent {
   }
 }
 
-class FloatingText extends TextComponent {
+class FloatingText extends TextComponent implements OpacityProvider {
   FloatingText({
     required String text,
     required Vector2 position,
     required Color color,
-  }) : super(
+  })  : _baseColor = color,
+        super(
           text: text,
           position: position,
           anchor: Anchor.center,
@@ -598,6 +986,7 @@ class FloatingText extends TextComponent {
             ),
           ),
         ) {
+    _rebuildTextRenderer();
     add(
       MoveByEffect(
         Vector2(0, -40),
@@ -609,6 +998,27 @@ class FloatingText extends TextComponent {
         0,
         EffectController(duration: 0.6, curve: Curves.easeIn),
         onComplete: removeFromParent,
+      ),
+    );
+  }
+
+  final Color _baseColor;
+  double _opacity = 1.0;
+
+  @override
+  double get opacity => _opacity;
+
+  @override
+  set opacity(double value) {
+    _opacity = value.clamp(0, 1);
+    _rebuildTextRenderer();
+  }
+
+  void _rebuildTextRenderer() {
+    final currentStyle = (textRenderer as TextPaint).style;
+    textRenderer = TextPaint(
+      style: currentStyle.copyWith(
+        color: _baseColor.withValues(alpha: _opacity),
       ),
     );
   }
