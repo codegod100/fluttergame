@@ -16,8 +16,10 @@ class LevelDefinition {
     required this.playerSpawn,
     required this.platforms,
     required this.starPlacements,
-    this.floatingFriends = const [],
-    this.baddies = const [],
+    this.floatingFriends = const <FloatingFriendSpec>[],
+    this.baddies = const <BaddieSpec>[],
+    this.coinPlacements = const <CoinPlacement>[],
+    this.tunnels = const <TunnelSpec>[],
   });
 
   final Vector2 size;
@@ -26,6 +28,8 @@ class LevelDefinition {
   final List<StarPlacement> starPlacements;
   final List<FloatingFriendSpec> floatingFriends;
   final List<BaddieSpec> baddies;
+  final List<CoinPlacement> coinPlacements;
+  final List<TunnelSpec> tunnels;
 }
 
 class PlatformSpec {
@@ -229,6 +233,84 @@ class StarPlacement {
   }
 }
 
+class CoinPlacement {
+  const CoinPlacement._internal({
+    this.position,
+    this.platformIndex,
+    this.horizontalFraction = 0.5,
+    this.heightOffset = 50,
+  }) : assert(
+          horizontalFraction >= 0 && horizontalFraction <= 1,
+          'horizontalFraction must be between 0 and 1',
+        );
+
+  const CoinPlacement.absolute(Vector2 position)
+      : this._internal(position: position);
+
+  const CoinPlacement.abovePlatform(
+    int platformIndex, {
+    double horizontalFraction = 0.5,
+    double heightOffset = 50,
+  }) : this._internal(
+          platformIndex: platformIndex,
+          horizontalFraction: horizontalFraction,
+          heightOffset: heightOffset,
+        );
+
+  final Vector2? position;
+  final int? platformIndex;
+  final double horizontalFraction;
+  final double heightOffset;
+
+  Vector2 resolve(List<PlatformSpec> platforms, Vector2 levelSize) {
+    if (position != null) {
+      final resolved = position!.clone();
+      const halfSize = 12.0;
+      resolved.x = resolved.x
+          .clamp(halfSize, levelSize.x - halfSize)
+          .toDouble();
+      resolved.y = resolved.y
+          .clamp(halfSize, levelSize.y - halfSize)
+          .toDouble();
+      return resolved;
+    }
+    assert(
+      platformIndex != null &&
+          platformIndex! >= 0 &&
+          platformIndex! < platforms.length,
+      'Coin placement references an invalid platform index.',
+    );
+    final platform = platforms[platformIndex!];
+    final x = platform.position.x + platform.size.x * horizontalFraction;
+    final y = platform.position.y - heightOffset;
+    const halfSize = 12.0;
+    return Vector2(
+      x.clamp(halfSize, levelSize.x - halfSize).toDouble(),
+      y.clamp(halfSize, levelSize.y - halfSize).toDouble(),
+    );
+  }
+}
+
+class TunnelSpec {
+  const TunnelSpec({
+    required this.position,
+    required this.size,
+    required this.exitSpawn,
+    this.color = const Color(0xFF6BD425),
+    this.entryInset = const EdgeInsets.fromLTRB(12, 14, 12, 6),
+    this.cooldownSeconds = 0.6,
+    this.label,
+  });
+
+  final Vector2 position;
+  final Vector2 size;
+  final Vector2 exitSpawn;
+  final Color color;
+  final EdgeInsets entryInset;
+  final double cooldownSeconds;
+  final String? label;
+}
+
 class CutePlatformerGame extends FlameGame with KeyboardEvents {
   static const double _viewportWidth = 800;
   static const double _viewportHeight = 480;
@@ -236,10 +318,12 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
 
   CutePlatformerGame()
       : score = ValueNotifier<int>(0),
+        coins = ValueNotifier<int>(0),
         lives = ValueNotifier<int>(_initialLives),
         gravity = Vector2(0, 900);
 
   final ValueNotifier<int> score;
+  final ValueNotifier<int> coins;
   final ValueNotifier<int> lives;
   final Vector2 gravity;
 
@@ -247,7 +331,10 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   final List<PlatformBlock> _platforms = [];
   final List<FloatingFriend> _floatingFriends = [];
   final List<Baddie> _baddies = [];
+  final List<Coin> _coins = [];
+  final List<TunnelPipe> _tunnels = [];
   List<Vector2> _starSpawns = [];
+  List<Vector2> _coinSpawns = [];
   late Rect _levelBounds;
   PastelBackground? _background;
   int _currentLevelIndex = 0;
@@ -257,7 +344,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
 
   final List<LevelDefinition> _levels = [
     LevelDefinition(
-      size: Vector2(1600, 600),
+      size: Vector2(1600, 1200),
       playerSpawn: Vector2(100, 480),
       platforms: [
         PlatformSpec(
@@ -291,6 +378,27 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           size: Vector2(200, 32),
           color: const Color(0xFFFDE2E4),
         ),
+        PlatformSpec(
+          position: Vector2(80, 1040),
+          size: Vector2(1320, 40),
+          color: const Color(0xFFB6E2D3),
+          priority: -2,
+        ),
+        PlatformSpec(
+          position: Vector2(360, 920),
+          size: Vector2(240, 26),
+          color: const Color(0xFFA0C4FF),
+        ),
+        PlatformSpec(
+          position: Vector2(720, 880),
+          size: Vector2(220, 24),
+          color: const Color(0xFFFFD6BA),
+        ),
+        PlatformSpec(
+          position: Vector2(1000, 960),
+          size: Vector2(220, 28),
+          color: const Color(0xFFFDE2E4),
+        ),
       ],
       starPlacements: const [
         StarPlacement.abovePlatform(1, horizontalFraction: 0.4, heightOffset: 80),
@@ -312,6 +420,12 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           amplitude: 10,
           speed: 0.8,
         ),
+        FloatingFriendSpec(
+          position: Vector2(980, 900),
+          color: const Color(0xFFFFF1E6),
+          amplitude: 12,
+          speed: 1.1,
+        ),
       ],
       baddies: const [
         BaddieSpec.onPlatform(
@@ -330,9 +444,33 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           startMovingRight: false,
         ),
       ],
+      coinPlacements: [
+        CoinPlacement.absolute(Vector2(380, 880)),
+        CoinPlacement.absolute(Vector2(430, 838)),
+        CoinPlacement.absolute(Vector2(480, 880)),
+        CoinPlacement.absolute(Vector2(720, 842)),
+        CoinPlacement.absolute(Vector2(780, 802)),
+        CoinPlacement.absolute(Vector2(840, 842)),
+      ],
+      tunnels: [
+        TunnelSpec(
+          position: Vector2(380, 424),
+          size: Vector2(112, 120),
+          exitSpawn: Vector2(404, 988),
+          label: 'Underground bonus!',
+        ),
+        TunnelSpec(
+          position: Vector2(1360, 904),
+          size: Vector2(96, 118),
+          exitSpawn: Vector2(1382, 492),
+          color: const Color(0xFF64DFDF),
+          entryInset: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          label: 'Back to daylight!',
+        ),
+      ],
     ),
     LevelDefinition(
-      size: Vector2(1800, 640),
+      size: Vector2(1800, 1200),
       playerSpawn: Vector2(140, 500),
       platforms: [
         PlatformSpec(
@@ -371,6 +509,22 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           size: Vector2(160, 28),
           color: const Color(0xFFB9FBC0),
         ),
+        PlatformSpec(
+          position: Vector2(240, 1040),
+          size: Vector2(1320, 44),
+          color: const Color(0xFFE0FBFC),
+          priority: -2,
+        ),
+        PlatformSpec(
+          position: Vector2(520, 920),
+          size: Vector2(240, 28),
+          color: const Color(0xFF98F5E1),
+        ),
+        PlatformSpec(
+          position: Vector2(980, 880),
+          size: Vector2(220, 28),
+          color: const Color(0xFFFFD6FF),
+        ),
       ],
       starPlacements: const [
         StarPlacement.abovePlatform(1, horizontalFraction: 0.5, heightOffset: 80),
@@ -399,6 +553,12 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           amplitude: 10,
           speed: 0.9,
         ),
+        FloatingFriendSpec(
+          position: Vector2(880, 940),
+          color: const Color(0xFFB9FBC0),
+          amplitude: 10,
+          speed: 1.0,
+        ),
       ],
       baddies: const [
         BaddieSpec.onPlatform(
@@ -424,9 +584,33 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           startMovingRight: false,
         ),
       ],
+      coinPlacements: [
+        CoinPlacement.absolute(Vector2(540, 890)),
+        CoinPlacement.absolute(Vector2(600, 850)),
+        CoinPlacement.absolute(Vector2(660, 890)),
+        CoinPlacement.absolute(Vector2(1020, 840)),
+        CoinPlacement.absolute(Vector2(1080, 802)),
+        CoinPlacement.absolute(Vector2(1140, 840)),
+      ],
+      tunnels: [
+        TunnelSpec(
+          position: Vector2(500, 508),
+          size: Vector2(112, 120),
+          exitSpawn: Vector2(560, 986),
+          label: 'Secret cavern!',
+        ),
+        TunnelSpec(
+          position: Vector2(1360, 904),
+          size: Vector2(112, 120),
+          exitSpawn: Vector2(1380, 472),
+          color: const Color(0xFF64DFDF),
+          entryInset: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          label: 'Back up top!',
+        ),
+      ],
     ),
     LevelDefinition(
-      size: Vector2(2000, 680),
+      size: Vector2(2000, 1320),
       playerSpawn: Vector2(120, 520),
       platforms: [
         PlatformSpec(
@@ -470,6 +654,22 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           size: Vector2(160, 32),
           color: const Color(0xFFFFC6FF),
         ),
+        PlatformSpec(
+          position: Vector2(260, 1120),
+          size: Vector2(1500, 48),
+          color: const Color(0xFFE6F4EA),
+          priority: -2,
+        ),
+        PlatformSpec(
+          position: Vector2(620, 1020),
+          size: Vector2(240, 30),
+          color: const Color(0xFFFDFFB6),
+        ),
+        PlatformSpec(
+          position: Vector2(1180, 980),
+          size: Vector2(240, 30),
+          color: const Color(0xFFFFB5A7),
+        ),
       ],
       starPlacements: const [
         StarPlacement.abovePlatform(1, horizontalFraction: 0.45, heightOffset: 85),
@@ -498,6 +698,12 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           color: const Color(0xFFBEE1E6),
           amplitude: 14,
           speed: 1.3,
+        ),
+        FloatingFriendSpec(
+          position: Vector2(980, 1020),
+          color: const Color(0xFFFFF1E6),
+          amplitude: 12,
+          speed: 1.15,
         ),
       ],
       baddies: const [
@@ -531,6 +737,30 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           startMovingRight: false,
         ),
       ],
+      coinPlacements: [
+        CoinPlacement.absolute(Vector2(640, 980)),
+        CoinPlacement.absolute(Vector2(700, 940)),
+        CoinPlacement.absolute(Vector2(760, 980)),
+        CoinPlacement.absolute(Vector2(1220, 942)),
+        CoinPlacement.absolute(Vector2(1280, 904)),
+        CoinPlacement.absolute(Vector2(1340, 942)),
+      ],
+      tunnels: [
+        TunnelSpec(
+          position: Vector2(440, 528),
+          size: Vector2(116, 126),
+          exitSpawn: Vector2(660, 1076),
+          label: 'Deep cavern!',
+        ),
+        TunnelSpec(
+          position: Vector2(1540, 1010),
+          size: Vector2(116, 126),
+          exitSpawn: Vector2(1580, 512),
+          color: const Color(0xFF64DFDF),
+          entryInset: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          label: 'Surface ahead!',
+        ),
+      ],
     ),
   ];
 
@@ -545,6 +775,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   double get horizontalDirection =>
       _buttonDirection != 0 ? _buttonDirection : _keyboardDirection;
   int get totalStars => _starSpawns.length;
+  int get totalCoins => _coinSpawns.length;
   bool get hasFinishedLevel => score.value >= totalStars;
   Player get player => _player;
   int get currentLevel => _currentLevelIndex;
@@ -585,6 +816,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
 
     _clearLevel();
     score.value = 0;
+    coins.value = 0;
     lives.value = _initialLives;
 
     _background?.removeFromParent();
@@ -606,6 +838,11 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
         .map((placement) => placement.resolve(level.platforms, level.size))
         .toList(growable: false);
     _spawnStars();
+
+    _coinSpawns = level.coinPlacements
+        .map((placement) => placement.resolve(level.platforms, level.size))
+        .toList(growable: false);
+    _spawnCoins();
 
     for (final spec in level.floatingFriends) {
       final friend = FloatingFriend(
@@ -629,6 +866,23 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
       _baddies.add(baddie);
     }
     await world.addAll(_baddies);
+
+    for (final spec in level.tunnels) {
+      if (!_isTunnelPlacementClear(spec)) {
+        continue;
+      }
+      final tunnel = TunnelPipe(
+        position: spec.position.clone(),
+        size: spec.size.clone(),
+        exitSpawn: spec.exitSpawn.clone(),
+        color: spec.color,
+        entryInset: spec.entryInset,
+        cooldownDuration: spec.cooldownSeconds,
+        label: spec.label,
+      );
+      _tunnels.add(tunnel);
+    }
+    await world.addAll(_tunnels);
 
     if (!_playerAdded) {
       _player = Player(spawnPoint: level.playerSpawn.clone());
@@ -673,6 +927,17 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
     }
     _baddies.clear();
 
+    for (final coin in _coins) {
+      coin.removeFromParent();
+    }
+    _coins.clear();
+    _coinSpawns = [];
+
+    for (final tunnel in _tunnels) {
+      tunnel.removeFromParent();
+    }
+    _tunnels.clear();
+
     for (final star in world.children.whereType<Star>().toList()) {
       star.removeFromParent();
     }
@@ -702,6 +967,37 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
     }
   }
 
+  void _spawnCoins() {
+    for (final spawn in _coinSpawns) {
+      final coin = Coin(position: spawn.clone());
+      _coins.add(coin);
+      world.add(coin);
+    }
+  }
+
+  bool _isTunnelPlacementClear(TunnelSpec spec) {
+    final pipeLeft = spec.position.x;
+    final pipeRight = spec.position.x + spec.size.x;
+    final pipeTop = spec.position.y;
+    final openingTop = pipeTop + spec.entryInset.top;
+
+    for (final platform in _platforms) {
+      final bounds = platform.bounds;
+      final overlapsHorizontally = bounds.right > pipeLeft && bounds.left < pipeRight;
+      if (!overlapsHorizontally) {
+        continue;
+      }
+
+      final intersectsOpeningColumn =
+          bounds.top < openingTop && bounds.bottom > pipeTop - 1;
+      if (intersectsOpeningColumn) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   void collectStar(Star star) {
     if (star.collected) {
       return;
@@ -723,6 +1019,21 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
         _queueNextLevel();
       }
     }
+  }
+
+  void collectCoin(Coin coin) {
+    if (coin.collected) {
+      return;
+    }
+    coins.value += 1;
+    coin.collect();
+    world.add(
+      FloatingText(
+        text: '+1 coin! 🪙',
+        position: coin.position.clone() - Vector2(0, 50),
+        color: const Color(0xFFFB8500),
+      ),
+    );
   }
 
   Future<void> resetLevel() async {
@@ -763,6 +1074,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
     super.update(dt);
     _player.horizontalInput = horizontalDirection;
     _handleEnemyInteractions();
+    _handleTunnelTravel();
   }
 
   @override
@@ -849,8 +1161,9 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
     lives.value = remainingLives;
     world.add(
       FloatingText(
-        text: remainingLives > 0 ? 'Ouch! Lives: $remainingLives' : 'Out of lives!'
-            ' Restarting...',
+        text: remainingLives > 0
+            ? 'Ouch! Lives: $remainingLives'
+            : 'Out of lives! Restarting...',
         position: _player.position.clone() - Vector2(0, 40),
         color: const Color(0xFFFF758F),
       ),
@@ -859,6 +1172,39 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
     if (remainingLives <= 0) {
       resetLevel();
     }
+  }
+
+  void _handleTunnelTravel() {
+    for (final tunnel in _tunnels) {
+      if (!tunnel.canTeleport(_player)) {
+        continue;
+      }
+
+      final destination = tunnel.resolveExitFor(_player.size);
+      _player.teleportTo(destination);
+      tunnel.triggerCooldown();
+
+      if (tunnel.label != null) {
+        world.add(
+          FloatingText(
+            text: tunnel.label!,
+            position: destination.clone() - Vector2(0, 60),
+            color: const Color(0xFF4895EF),
+          ),
+        );
+      }
+
+      break;
+    }
+  }
+
+  bool shouldBypassTunnelCollision(Player player, Rect platformRect) {
+    for (final tunnel in _tunnels) {
+      if (tunnel.shouldBypassCollision(player, platformRect)) {
+        return true;
+      }
+    }
+    return false;
   }
 }
 
@@ -995,6 +1341,13 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
     return true;
   }
 
+  void teleportTo(Vector2 destination) {
+    position.setFrom(destination);
+    _previousPosition.setFrom(destination);
+    _velocity.setZero();
+    _isOnGround = false;
+  }
+
   void _applyPhysics(double dt) {
     _velocity.y += gameRef.gravity.y * dt;
     _velocity.x = horizontalInput * _moveSpeed;
@@ -1011,6 +1364,9 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
     position.x += _velocity.x * dt;
 
     for (final platform in gameRef.platforms) {
+      if (gameRef.shouldBypassTunnelCollision(this, platform.bounds)) {
+        continue;
+      }
       if (bounds.overlaps(platform.bounds)) {
         if (_velocity.x > 0) {
           position.x = platform.bounds.left - size.x;
@@ -1027,6 +1383,9 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
     _isOnGround = false;
 
     for (final platform in gameRef.platforms) {
+      if (gameRef.shouldBypassTunnelCollision(this, platform.bounds)) {
+        continue;
+      }
       if (bounds.overlaps(platform.bounds)) {
         if (_velocity.y > 0) {
           position.y = platform.bounds.top - size.y;
@@ -1177,6 +1536,291 @@ class Star extends PositionComponent
         EffectController(duration: 0.25),
       ),
     );
+  }
+}
+
+class Coin extends PositionComponent
+    with HasGameRef<CutePlatformerGame>
+    implements OpacityProvider {
+  Coin({required Vector2 position})
+      : super(
+          position: position,
+          size: Vector2.all(26),
+          anchor: Anchor.center,
+          priority: 2,
+        ) {
+    _applyOpacityToPaints();
+  }
+
+  bool collected = false;
+  double _time = 0;
+  static const _fillColor = Color(0xFFFFC300);
+  static const _strokeColor = Color(0xFFB08904);
+  final Paint _fillPaint = Paint();
+  final Paint _strokePaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 3;
+  double _opacity = 1.0;
+
+  Rect get bounds => Rect.fromCenter(
+        center: Offset(position.x, position.y),
+        width: size.x,
+        height: size.y,
+      );
+
+  @override
+  double get opacity => _opacity;
+
+  @override
+  set opacity(double value) {
+    _opacity = value.clamp(0, 1);
+    _applyOpacityToPaints();
+  }
+
+  void _applyOpacityToPaints() {
+    _fillPaint.color = _fillColor.withValues(alpha: _opacity);
+    _strokePaint.color = _strokeColor.withValues(alpha: _opacity);
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    _time += dt * 6;
+
+    if (!collected && bounds.overlaps(gameRef.player.bounds)) {
+      gameRef.collectCoin(this);
+    }
+  }
+
+  @override
+  void render(Canvas canvas) {
+    canvas.save();
+    canvas.translate(size.x / 2, size.y / 2);
+    final pulse = 1 + math.sin(_time) * 0.06;
+    canvas.scale(pulse, 1.0);
+
+    final radius = size.x / 2;
+    canvas.drawCircle(Offset.zero, radius, _fillPaint);
+    canvas.drawCircle(Offset.zero, radius - 2, _strokePaint);
+
+    final innerStroke = Paint()
+      ..color = _strokePaint.color.withValues(alpha: _opacity)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawCircle(Offset.zero, radius * 0.6, innerStroke);
+
+    final highlightPaint = Paint()
+      ..color = Colors.white.withValues(alpha: _opacity * 0.7)
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(-radius * 0.4, -radius * 0.2),
+      Offset(-radius * 0.1, -radius * 0.4),
+      highlightPaint,
+    );
+
+    canvas.restore();
+  }
+
+  void collect() {
+    collected = true;
+    add(
+      OpacityEffect.to(
+        0,
+        EffectController(duration: 0.25),
+        onComplete: removeFromParent,
+      ),
+    );
+    add(
+      ScaleEffect.to(
+        Vector2.all(1.4),
+        EffectController(duration: 0.25),
+      ),
+    );
+  }
+}
+
+class TunnelPipe extends PositionComponent
+    with HasGameRef<CutePlatformerGame>
+    implements OpacityProvider {
+  TunnelPipe({
+    required Vector2 position,
+    required Vector2 size,
+    required this.exitSpawn,
+    required this.color,
+    this.entryInset = const EdgeInsets.fromLTRB(12, 14, 12, 6),
+    this.cooldownDuration = 0.6,
+    this.label,
+  })  : _opacity = 1,
+        super(
+          position: position,
+          size: size,
+          anchor: Anchor.topLeft,
+          priority: -1,
+        );
+
+  final Vector2 exitSpawn;
+  final Color color;
+  final EdgeInsets entryInset;
+  final double cooldownDuration;
+  final String? label;
+
+  double _cooldown = 0;
+  double _opacity;
+  bool _containsPlayer = false;
+
+  Rect get openingRect => Rect.fromLTWH(
+        position.x + entryInset.left,
+        position.y + entryInset.top,
+        size.x - entryInset.horizontal,
+        size.y - entryInset.vertical,
+      );
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (_cooldown > 0) {
+      _cooldown = math.max(0, _cooldown - dt);
+    }
+
+    if (_containsPlayer &&
+        !gameRef.player.bounds.overlaps(openingRect)) {
+      _containsPlayer = false;
+    }
+  }
+
+  bool canTeleport(Player player) {
+    if (_cooldown > 0) {
+      return false;
+    }
+    final rect = openingRect;
+    final playerRect = player.bounds;
+    const tolerance = 4.0;
+    final fullyInside = playerRect.left >= rect.left + tolerance &&
+        playerRect.right <= rect.right - tolerance &&
+        playerRect.top >= rect.top + tolerance &&
+        playerRect.bottom <= rect.bottom - tolerance;
+    if (!fullyInside) {
+      return false;
+    }
+
+    if (!_containsPlayer) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool shouldBypassCollision(Player player, Rect platformRect) {
+    if (!platformRect.overlaps(openingRect)) {
+      return false;
+    }
+    final playerRect = player.bounds;
+    if (!playerRect.overlaps(openingRect)) {
+      _containsPlayer = false;
+      return false;
+    }
+
+    const horizontalPadding = 6.0;
+    final insideHorizontally =
+        playerRect.left >= openingRect.left - horizontalPadding &&
+        playerRect.right <= openingRect.right + horizontalPadding;
+
+    if (!insideHorizontally) {
+      _containsPlayer = false;
+      return false;
+    }
+
+    const entryTolerance = 12.0;
+    final enteringFromTop =
+        player.previousBottom <= openingRect.top + entryTolerance &&
+            player.verticalVelocity >= 0;
+
+    if (enteringFromTop) {
+      _containsPlayer = true;
+    }
+
+    return _containsPlayer && player.verticalVelocity >= 0;
+  }
+
+  void triggerCooldown() {
+    _cooldown = cooldownDuration;
+    _containsPlayer = false;
+  }
+
+  Vector2 resolveExitFor(Vector2 playerSize) {
+    final bounds = gameRef.levelBounds;
+    final resolved = exitSpawn.clone();
+    resolved.x = resolved.x
+        .clamp(bounds.left, bounds.right - playerSize.x)
+        .toDouble();
+    resolved.y = resolved.y
+        .clamp(bounds.top, bounds.bottom - playerSize.y)
+        .toDouble();
+    return resolved;
+  }
+
+  @override
+  double get opacity => _opacity;
+
+  @override
+  set opacity(double value) {
+    _opacity = value.clamp(0, 1);
+  }
+
+  @override
+  void render(Canvas canvas) {
+    final lipHeight = math.max(20.0, size.y * 0.22);
+    final bodyRect = Rect.fromLTWH(0, lipHeight - 6, size.x, size.y - (lipHeight - 6));
+    final lipRect = Rect.fromLTWH(-size.x * 0.08, 0, size.x * 1.16, lipHeight);
+
+    final bodyPaint = Paint()
+      ..color = color.withValues(alpha: _opacity)
+      ..style = PaintingStyle.fill;
+    final lipPaint = Paint()
+      ..color = color.withValues(alpha: (_opacity * 0.9).clamp(0, 1))
+      ..style = PaintingStyle.fill;
+    final shadowPaint = Paint()
+      ..color = const Color(0x22000000)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+
+    canvas.save();
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(bodyRect.shift(const Offset(2, 4)), const Radius.circular(18)),
+      shadowPaint,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(lipRect, const Radius.circular(18)),
+      lipPaint,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(bodyRect, const Radius.circular(18)),
+      bodyPaint,
+    );
+
+    final interior = Rect.fromLTWH(
+      entryInset.left,
+      entryInset.top,
+      size.x - entryInset.horizontal,
+      size.y - entryInset.vertical,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(interior, const Radius.circular(12)),
+      Paint()
+        ..color = Colors.black.withValues(alpha: _opacity * 0.35)
+        ..style = PaintingStyle.fill,
+    );
+
+    canvas.drawLine(
+      Offset(lipRect.left + 8, lipRect.bottom - 4),
+      Offset(lipRect.right - 8, lipRect.bottom - 4),
+      Paint()
+        ..color = Colors.white.withValues(alpha: _opacity * 0.4)
+        ..strokeWidth = 3,
+    );
+
+    canvas.restore();
   }
 }
 

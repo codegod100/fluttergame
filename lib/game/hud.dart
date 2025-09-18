@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'cute_platformer_game.dart';
@@ -15,61 +16,68 @@ class CuteHud extends StatelessWidget {
           Align(
             alignment: Alignment.topCenter,
             child: SafeArea(
-              child: ValueListenableBuilder<int>(
-                valueListenable: game.score,
-                builder: (_, score, __) {
-                  return ValueListenableBuilder<int>(
-                    valueListenable: game.lives,
-                    builder: (_, lives, __) {
-                      final totalStars = game.totalStars;
-                      final maxLives = game.maxLives;
-                      return Container(
-                        margin: const EdgeInsets.only(top: 16),
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.85),
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x22000000),
-                              blurRadius: 12,
-                              offset: Offset(0, 6),
-                            ),
-                          ],
+              child: AnimatedBuilder(
+                animation: Listenable.merge([
+                  game.score,
+                  game.coins,
+                  game.lives,
+                ]),
+                builder: (_, __) {
+                  final stars = game.score.value;
+                  final totalStars = game.totalStars;
+                  final coinCount = game.coins.value;
+                  final totalCoins = game.totalCoins;
+                  final coinSegment =
+                      totalCoins > 0 ? ' • Coins: $coinCount / $totalCoins' : '';
+                  final livesRemaining = game.lives.value;
+                  final maxLives = game.maxLives;
+
+                  return Container(
+                    margin: const EdgeInsets.only(top: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x22000000),
+                          blurRadius: 12,
+                          offset: Offset(0, 6),
                         ),
-                        child: Column(
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Level ${game.currentLevel + 1}/${game.levelCount} • '
+                          'Stars: $stars / $totalStars$coinSegment',
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF3A0CA3),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
                           mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Text(
-                              'Level ${game.currentLevel + 1}/${game.levelCount} • Stars: $score / $totalStars',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF3A0CA3),
+                          children: List.generate(maxLives, (index) {
+                            final isFilled = index < livesRemaining;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 3),
+                              child: Icon(
+                                Icons.favorite,
+                                size: 18,
+                                color: isFilled
+                                    ? const Color(0xFFE63946)
+                                    : const Color(0xFFE1E1E1),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: List.generate(maxLives, (index) {
-                                final isFilled = index < lives;
-                                return Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 3),
-                                  child: Icon(
-                                    Icons.favorite,
-                                    size: 18,
-                                    color: isFilled
-                                        ? const Color(0xFFE63946)
-                                        : const Color(0xFFE1E1E1),
-                                  ),
-                                );
-                              }),
-                            ),
-                          ],
+                            );
+                          }),
                         ),
-                      );
-                    },
+                      ],
+                    ),
                   );
                 },
               ),
@@ -290,12 +298,12 @@ class _ControlButtonState extends State<_ControlButton> {
   @override
   Widget build(BuildContext context) {
     final effectiveScale = widget.scale.clamp(0.6, 1.2).toDouble();
-    final horizontalPadding = ((widget.wide ? 42.0 : 34.0) * effectiveScale);
-    final verticalPadding = ((widget.wide ? 26.0 : 30.0) * effectiveScale);
-    final minWidth = ((widget.wide ? 180.0 : 96.0) * effectiveScale);
+    final horizontalPadding = (widget.wide ? 42.0 : 34.0) * effectiveScale;
+    final verticalPadding = (widget.wide ? 26.0 : 30.0) * effectiveScale;
+    final minWidth = (widget.wide ? 180.0 : 96.0) * effectiveScale;
     final minHeight = 88.0 * effectiveScale;
     final borderRadius = 24.0 * effectiveScale;
-    final fontSize = ((widget.wide ? 20.0 : 30.0) * effectiveScale);
+    final fontSize = (widget.wide ? 20.0 : 30.0) * effectiveScale;
 
     return Listener(
       onPointerDown: (_) {
