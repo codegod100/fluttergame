@@ -230,14 +230,17 @@ class StarPlacement {
 }
 
 class CutePlatformerGame extends FlameGame with KeyboardEvents {
-  CutePlatformerGame()
-      : score = ValueNotifier<int>(0),
-        gravity = Vector2(0, 900);
-
   static const double _viewportWidth = 800;
   static const double _viewportHeight = 480;
+  static const int _initialLives = 3;
+
+  CutePlatformerGame()
+      : score = ValueNotifier<int>(0),
+        lives = ValueNotifier<int>(_initialLives),
+        gravity = Vector2(0, 900);
 
   final ValueNotifier<int> score;
+  final ValueNotifier<int> lives;
   final Vector2 gravity;
 
   late final Player _player;
@@ -546,6 +549,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   Player get player => _player;
   int get currentLevel => _currentLevelIndex;
   int get levelCount => _levels.length;
+  int get maxLives => _initialLives;
 
   static final _movementKeys = <LogicalKeyboardKey>{
     LogicalKeyboardKey.arrowLeft,
@@ -581,6 +585,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
 
     _clearLevel();
     score.value = 0;
+    lives.value = _initialLives;
 
     _background?.removeFromParent();
     _background = PastelBackground(levelSize: level.size.clone());
@@ -823,11 +828,36 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
             color: const Color(0xFFFFC857),
           ),
         );
-      } else {
-        _player.respawn();
+      } else if (_player.applyEnemyHit(enemyBounds)) {
+        _onPlayerDamaged();
       }
 
       break;
+    }
+  }
+
+  void _onPlayerDamaged() {
+    if (lives.value <= 0) {
+      return;
+    }
+
+    final remainingLives = math.max(0, lives.value - 1);
+    if (remainingLives == lives.value) {
+      return;
+    }
+
+    lives.value = remainingLives;
+    world.add(
+      FloatingText(
+        text: remainingLives > 0 ? 'Ouch! Lives: $remainingLives' : 'Out of lives!'
+            ' Restarting...',
+        position: _player.position.clone() - Vector2(0, 40),
+        color: const Color(0xFFFF758F),
+      ),
+    );
+
+    if (remainingLives <= 0) {
+      resetLevel();
     }
   }
 }
@@ -845,9 +875,12 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   final Vector2 _previousPosition = Vector2.zero();
   double horizontalInput = 0;
   bool _isOnGround = false;
+  double _invulnerabilityTimer = 0;
 
   static const _moveSpeed = 220.0;
   static const _jumpSpeed = 520.0;
+  static const _invulnerabilityDuration = 1.2;
+  static const _knockbackSpeed = 240.0;
 
   final Paint _bodyPaint = Paint()..color = const Color(0xFF8ECAE6);
   final Paint _bellyPaint = Paint()..color = const Color(0xFFEFF7F6);
@@ -857,9 +890,13 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   Rect get bounds => Rect.fromLTWH(position.x, position.y, size.x, size.y);
   double get previousBottom => _previousPosition.y + size.y;
   double get verticalVelocity => _velocity.y;
+  bool get isInvulnerable => _invulnerabilityTimer > 0;
 
   @override
   void render(Canvas canvas) {
+    if (_invulnerabilityTimer > 0 && (_invulnerabilityTimer * 20).floor().isEven) {
+      return;
+    }
     final bodyRect = RRect.fromRectAndRadius(
       Offset.zero & Size(size.x, size.y),
       const Radius.circular(14),
@@ -898,6 +935,10 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
     super.update(dt);
     _applyPhysics(dt);
     _keepWithinBounds();
+
+    if (_invulnerabilityTimer > 0) {
+      _invulnerabilityTimer = math.max(0, _invulnerabilityTimer - dt);
+    }
   }
 
   void jump() {
@@ -912,6 +953,7 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
     _previousPosition.setFrom(_spawnPoint);
     _velocity.setZero();
     _isOnGround = false;
+    _invulnerabilityTimer = 0;
   }
 
   void setSpawnPoint(Vector2 spawnPoint) {
@@ -922,6 +964,35 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
     position.y = surfaceY - size.y;
     _velocity.y = -_jumpSpeed * 0.6;
     _isOnGround = false;
+  }
+
+  bool applyEnemyHit(Rect enemyBounds) {
+    if (_invulnerabilityTimer > 0) {
+      return false;
+    }
+
+    final playerCenter = bounds.center.dx;
+    final enemyCenter = enemyBounds.center.dx;
+    final direction = playerCenter < enemyCenter ? -1 : 1;
+    const separation = 6.0;
+
+    if (direction < 0) {
+      position.x = enemyBounds.left - size.x - separation;
+    } else {
+      position.x = enemyBounds.right + separation;
+    }
+
+    final levelBounds = gameRef.levelBounds;
+    position.x = position.x.clamp(levelBounds.left, levelBounds.right - size.x);
+    position.y = math.min(position.y, levelBounds.bottom - size.y);
+
+    horizontalInput = 0;
+    _velocity
+      ..x = direction * _knockbackSpeed
+      ..y = -_jumpSpeed * 0.4;
+    _isOnGround = false;
+    _invulnerabilityTimer = _invulnerabilityDuration;
+    return true;
   }
 
   void _applyPhysics(double dt) {
