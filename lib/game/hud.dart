@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'cute_platformer_game.dart';
@@ -32,9 +33,16 @@ class _CuteHudState extends State<CuteHud> {
           Align(
             alignment: Alignment.topCenter,
             child: SafeArea(
-              child: ValueListenableBuilder<int>(
-                valueListenable: widget.game.score,
-                builder: (_, score, __) {
+              child: AnimatedBuilder(
+                animation: Listenable.merge([widget.game.score, widget.game.coins]),
+                builder: (_, __) {
+                  final stars = widget.game.score.value;
+                  final totalStars = widget.game.totalStars;
+                  final coinCount = widget.game.coins.value;
+                  final totalCoins = widget.game.totalCoins;
+                  final coinSegment = totalCoins > 0
+                      ? ' • Coins: $coinCount / $totalCoins'
+                      : '';
                   return Container(
                     margin: const EdgeInsets.only(top: 16),
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -50,7 +58,8 @@ class _CuteHudState extends State<CuteHud> {
                       ],
                     ),
                     child: Text(
-                      'Level ${widget.game.currentLevel + 1}/${widget.game.levelCount} • Stars: $score / ${widget.game.totalStars}',
+                      'Level ${widget.game.currentLevel + 1}/${widget.game.levelCount} • '
+                      'Stars: $stars / $totalStars$coinSegment',
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w600,
