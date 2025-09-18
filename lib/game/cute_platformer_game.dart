@@ -300,6 +300,9 @@ class TunnelSpec {
     this.entryInset = const EdgeInsets.fromLTRB(12, 14, 12, 6),
     this.cooldownSeconds = 0.6,
     this.label,
+    this.linkId,
+    this.rememberEntryPosition = false,
+    this.returnToRememberedEntry = false,
   });
 
   final Vector2 position;
@@ -309,6 +312,9 @@ class TunnelSpec {
   final EdgeInsets entryInset;
   final double cooldownSeconds;
   final String? label;
+  final String? linkId;
+  final bool rememberEntryPosition;
+  final bool returnToRememberedEntry;
 }
 
 class CutePlatformerGame extends FlameGame with KeyboardEvents {
@@ -341,6 +347,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   bool _playerAdded = false;
   bool _levelTransitionPending = false;
   CameraTarget? _cameraTarget;
+  final Map<String, Vector2> _storedTunnelEntries = {};
 
   final List<LevelDefinition> _levels = [
     LevelDefinition(
@@ -354,12 +361,12 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           priority: -2,
         ),
         PlatformSpec(
-          position: Vector2(140, 440),
-          size: Vector2(220, 32),
+          position: Vector2(140, 360),
+          size: Vector2(150, 32),
           color: const Color(0xFFF0A6CA),
         ),
         PlatformSpec(
-          position: Vector2(430, 350),
+          position: Vector2(430, 300),
           size: Vector2(160, 28),
           color: const Color(0xFF9AD0EC),
         ),
@@ -380,7 +387,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
         ),
         PlatformSpec(
           position: Vector2(80, 1040),
-          size: Vector2(1320, 40),
+          size: Vector2(1520, 40),
           color: const Color(0xFFB6E2D3),
           priority: -2,
         ),
@@ -458,14 +465,18 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           size: Vector2(112, 120),
           exitSpawn: Vector2(404, 988),
           label: 'Underground bonus!',
+          linkId: 'level1-main',
+          rememberEntryPosition: true,
         ),
         TunnelSpec(
-          position: Vector2(1360, 904),
+          position: Vector2(1360, 922),
           size: Vector2(96, 118),
           exitSpawn: Vector2(1382, 492),
           color: const Color(0xFF64DFDF),
           entryInset: const EdgeInsets.fromLTRB(12, 12, 12, 8),
           label: 'Back to daylight!',
+          linkId: 'level1-main',
+          returnToRememberedEntry: true,
         ),
       ],
     ),
@@ -598,14 +609,18 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           size: Vector2(112, 120),
           exitSpawn: Vector2(560, 986),
           label: 'Secret cavern!',
+          linkId: 'level2-main',
+          rememberEntryPosition: true,
         ),
         TunnelSpec(
-          position: Vector2(1360, 904),
+          position: Vector2(1360, 920),
           size: Vector2(112, 120),
           exitSpawn: Vector2(1380, 472),
           color: const Color(0xFF64DFDF),
           entryInset: const EdgeInsets.fromLTRB(12, 12, 12, 8),
           label: 'Back up top!',
+          linkId: 'level2-main',
+          returnToRememberedEntry: true,
         ),
       ],
     ),
@@ -751,14 +766,18 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           size: Vector2(116, 126),
           exitSpawn: Vector2(660, 1076),
           label: 'Deep cavern!',
+          linkId: 'level3-main',
+          rememberEntryPosition: true,
         ),
         TunnelSpec(
-          position: Vector2(1540, 1010),
+          position: Vector2(1540, 994),
           size: Vector2(116, 126),
           exitSpawn: Vector2(1580, 512),
           color: const Color(0xFF64DFDF),
           entryInset: const EdgeInsets.fromLTRB(12, 12, 12, 8),
           label: 'Surface ahead!',
+          linkId: 'level3-main',
+          returnToRememberedEntry: true,
         ),
       ],
     ),
@@ -771,6 +790,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
 
   Rect get levelBounds => _levelBounds;
   List<PlatformBlock> get platforms => _platforms;
+  List<TunnelPipe> get tunnels => _tunnels;
   List<Baddie> get baddies => _baddies;
   double get horizontalDirection =>
       _buttonDirection != 0 ? _buttonDirection : _keyboardDirection;
@@ -879,6 +899,9 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
         entryInset: spec.entryInset,
         cooldownDuration: spec.cooldownSeconds,
         label: spec.label,
+        linkId: spec.linkId,
+        rememberEntryPosition: spec.rememberEntryPosition,
+        returnToRememberedEntry: spec.returnToRememberedEntry,
       );
       _tunnels.add(tunnel);
     }
@@ -937,6 +960,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
       tunnel.removeFromParent();
     }
     _tunnels.clear();
+    _storedTunnelEntries.clear();
 
     for (final star in world.children.whereType<Star>().toList()) {
       star.removeFromParent();
@@ -976,21 +1000,34 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   }
 
   bool _isTunnelPlacementClear(TunnelSpec spec) {
-    final pipeLeft = spec.position.x;
-    final pipeRight = spec.position.x + spec.size.x;
     final pipeTop = spec.position.y;
+    final openingLeft = spec.position.x + spec.entryInset.left;
+    final openingRight = spec.position.x + spec.size.x - spec.entryInset.right;
     final openingTop = pipeTop + spec.entryInset.top;
+
+    if (openingRight <= openingLeft) {
+      return false;
+    }
+
+    const double verticalTolerance = 1.0;
+    const double requiredClearance = 44.0;
 
     for (final platform in _platforms) {
       final bounds = platform.bounds;
-      final overlapsHorizontally = bounds.right > pipeLeft && bounds.left < pipeRight;
-      if (!overlapsHorizontally) {
+      final overlapsOpening =
+          bounds.left < openingRight && bounds.right > openingLeft;
+      if (!overlapsOpening) {
         continue;
       }
 
-      final intersectsOpeningColumn =
-          bounds.top < openingTop && bounds.bottom > pipeTop - 1;
-      if (intersectsOpeningColumn) {
+      final double clearanceCeiling = openingTop - requiredClearance;
+      if (bounds.top < openingTop && bounds.bottom >= clearanceCeiling) {
+        return false;
+      }
+
+      final intrudesAboveOpening =
+          bounds.top < openingTop && bounds.bottom > pipeTop - verticalTolerance;
+      if (intrudesAboveOpening) {
         return false;
       }
     }
@@ -1175,22 +1212,50 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   }
 
   void _handleTunnelTravel() {
+    if (_player.isTeleporting) {
+      return;
+    }
     for (final tunnel in _tunnels) {
       if (!tunnel.canTeleport(_player)) {
         continue;
       }
 
-      final destination = tunnel.resolveExitFor(_player.size);
-      _player.teleportTo(destination);
+      if (tunnel.rememberEntryPosition && tunnel.linkId != null) {
+        final surfaceSpot = tunnel.surfaceReturnPosition(_player.size);
+        _storedTunnelEntries[tunnel.linkId!] = surfaceSpot;
+      }
+
+      Vector2? destinationOverride;
+      if (tunnel.returnToRememberedEntry && tunnel.linkId != null) {
+        final stored = _storedTunnelEntries[tunnel.linkId!];
+        if (stored != null) {
+          destinationOverride = stored.clone();
+        }
+      }
+
+      final destination =
+          destinationOverride ?? tunnel.resolveExitFor(_player.size);
+      final travelDuration = _player.startTunnelTravel(tunnel, destination);
       tunnel.triggerCooldown();
 
+      if (tunnel.returnToRememberedEntry && tunnel.linkId != null) {
+        _storedTunnelEntries.remove(tunnel.linkId!);
+      }
+
       if (tunnel.label != null) {
-        world.add(
-          FloatingText(
-            text: tunnel.label!,
-            position: destination.clone() - Vector2(0, 60),
-            color: const Color(0xFF4895EF),
-          ),
+        final labelText = tunnel.label!;
+        final labelPosition = destination.clone() - Vector2(0, 60);
+        Future<void>.delayed(
+          Duration(milliseconds: (travelDuration * 1000).round()),
+          () {
+            world.add(
+              FloatingText(
+                text: labelText,
+                position: labelPosition.clone(),
+                color: const Color(0xFF4895EF),
+              ),
+            );
+          },
         );
       }
 
@@ -1208,13 +1273,17 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
   }
 }
 
-class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
+class Player extends PositionComponent
+    with HasGameRef<CutePlatformerGame>
+    implements OpacityProvider {
   Player({required Vector2 spawnPoint})
       : _spawnPoint = spawnPoint.clone(),
         super(
           position: spawnPoint.clone(),
           size: Vector2.all(52),
-        );
+        ) {
+    _applyOpacityToPaints();
+  }
 
   final Vector2 _spawnPoint;
   final Vector2 _velocity = Vector2.zero();
@@ -1223,24 +1292,66 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   bool _isOnGround = false;
   double _invulnerabilityTimer = 0;
 
+  double _opacity = 1.0;
+  bool _isTeleporting = false;
+  double _teleportTimer = 0;
+  double _teleportEntryDuration = 0;
+  double _teleportExitDuration = 0;
+  bool _teleportWarped = false;
+
+  final Vector2 _teleportStart = Vector2.zero();
+  final Vector2 _teleportExitStart = Vector2.zero();
+  final Vector2 _teleportEntryOffset = Vector2.zero();
+  final Vector2 _teleportExitOffset = Vector2.zero();
+  final Vector2 _teleportWork = Vector2.zero();
+
   static const _moveSpeed = 220.0;
   static const _jumpSpeed = 520.0;
   static const _invulnerabilityDuration = 1.2;
   static const _knockbackSpeed = 240.0;
 
-  final Paint _bodyPaint = Paint()..color = const Color(0xFF8ECAE6);
-  final Paint _bellyPaint = Paint()..color = const Color(0xFFEFF7F6);
-  final Paint _cheekPaint = Paint()..color = const Color(0xFFFFB5A7);
-  final Paint _eyePaint = Paint()..color = const Color(0xFF1D3557);
+  static const Color _bodyColor = Color(0xFF8ECAE6);
+  static const Color _bellyColor = Color(0xFFEFF7F6);
+  static const Color _cheekColor = Color(0xFFFFB5A7);
+  static const Color _eyeColor = Color(0xFF1D3557);
+
+  final Paint _bodyPaint = Paint();
+  final Paint _bellyPaint = Paint();
+  final Paint _cheekPaint = Paint();
+  final Paint _eyePaint = Paint();
 
   Rect get bounds => Rect.fromLTWH(position.x, position.y, size.x, size.y);
   double get previousBottom => _previousPosition.y + size.y;
   double get verticalVelocity => _velocity.y;
   bool get isInvulnerable => _invulnerabilityTimer > 0;
+  bool get isTeleporting => _isTeleporting;
+
+  @override
+  double get opacity => _opacity;
+
+  @override
+  set opacity(double value) {
+    final clamped = value.clamp(0, 1).toDouble();
+    if (clamped == _opacity) {
+      return;
+    }
+    _opacity = clamped;
+    _applyOpacityToPaints();
+  }
+
+  void _applyOpacityToPaints() {
+    _bodyPaint.color = _bodyColor.withValues(alpha: _opacity);
+    _bellyPaint.color = _bellyColor.withValues(alpha: _opacity);
+    _cheekPaint.color = _cheekColor.withValues(alpha: _opacity);
+    _eyePaint.color = _eyeColor.withValues(alpha: _opacity);
+  }
 
   @override
   void render(Canvas canvas) {
     if (_invulnerabilityTimer > 0 && (_invulnerabilityTimer * 20).floor().isEven) {
+      return;
+    }
+    if (_opacity <= 0) {
       return;
     }
     final bodyRect = RRect.fromRectAndRadius(
@@ -1278,7 +1389,21 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   @override
   void update(double dt) {
     _previousPosition.setFrom(position);
-    super.update(dt);
+    if (_isTeleporting) {
+      _updateTeleport(dt);
+      super.update(dt);
+      _keepWithinBounds();
+      if (_invulnerabilityTimer > 0) {
+        _invulnerabilityTimer = math.max(0, _invulnerabilityTimer - dt);
+      }
+      _previousPosition.setFrom(position);
+      if (_isTeleporting) {
+        return;
+      }
+    } else {
+      super.update(dt);
+    }
+
     _applyPhysics(dt);
     _keepWithinBounds();
 
@@ -1287,7 +1412,124 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
     }
   }
 
+  void _updateTeleport(double dt) {
+    final totalDuration = _teleportEntryDuration + _teleportExitDuration;
+    if (totalDuration <= 0) {
+      _finishTeleport();
+      return;
+    }
+
+    _teleportTimer = math.min(_teleportTimer + dt, totalDuration);
+
+    if (_teleportTimer <= _teleportEntryDuration && _teleportEntryDuration > 0) {
+      final double progress =
+          (_teleportTimer / _teleportEntryDuration).clamp(0.0, 1.0);
+      final eased = Curves.easeInQuad.transform(progress);
+      _teleportWork
+        ..setFrom(_teleportEntryOffset)
+        ..scale(eased)
+        ..add(_teleportStart);
+      position.setFrom(_teleportWork);
+      opacity = 1 - Curves.easeInCubic.transform(progress);
+    } else {
+      if (!_teleportWarped) {
+        position.setFrom(_teleportExitStart);
+        _previousPosition.setFrom(position);
+        _teleportWarped = true;
+      }
+      final double exitProgress = _teleportExitDuration <= 0
+          ? 1.0
+          : ((_teleportTimer - _teleportEntryDuration) / _teleportExitDuration)
+              .clamp(0.0, 1.0);
+      final eased = Curves.easeOutCubic.transform(exitProgress);
+      _teleportWork
+        ..setFrom(_teleportExitOffset)
+        ..scale(eased)
+        ..add(_teleportExitStart);
+      position.setFrom(_teleportWork);
+      opacity = Curves.easeOutCubic.transform(exitProgress);
+    }
+
+    if (_teleportTimer >= totalDuration - 1e-6) {
+      _finishTeleport();
+    }
+  }
+
+  double startTunnelTravel(TunnelPipe tunnel, Vector2 destination) {
+    _cancelTeleport();
+
+    final opening = tunnel.openingRect;
+    final levelBounds = gameRef.levelBounds;
+    final double maxEntryDepth =
+        math.max(0, opening.bottom - (position.y + size.y));
+    final double maxExitDepth =
+        math.max(0, levelBounds.bottom - size.y - destination.y);
+    final double travelDepth = math.min(math.min(maxEntryDepth, maxExitDepth), 48.0);
+
+    _teleportStart.setFrom(position);
+    _teleportExitStart
+      ..setFrom(destination)
+      ..y += travelDepth;
+
+    _teleportEntryOffset
+      ..setValues(0, travelDepth);
+    _teleportExitOffset
+      ..setValues(0, -travelDepth);
+
+    _teleportTimer = 0;
+    _teleportEntryDuration = 0.26;
+    _teleportExitDuration = 0.28;
+    _teleportWarped = false;
+    _isTeleporting = true;
+    horizontalInput = 0;
+    _velocity.setZero();
+    _isOnGround = false;
+    opacity = 1;
+
+    return _teleportEntryDuration + _teleportExitDuration;
+  }
+
+  void _finishTeleport() {
+    _isTeleporting = false;
+    _teleportTimer = 0;
+    _teleportEntryDuration = 0;
+    _teleportExitDuration = 0;
+    _teleportWarped = false;
+    _teleportEntryOffset.setZero();
+    _teleportExitOffset.setZero();
+    _teleportStart.setZero();
+    _teleportExitStart.setZero();
+    opacity = 1;
+    _velocity.setZero();
+    _isOnGround = false;
+    _previousPosition.setFrom(position);
+  }
+
+  void _cancelTeleport() {
+    if (!_isTeleporting) {
+      opacity = 1;
+      _teleportEntryOffset.setZero();
+      _teleportExitOffset.setZero();
+      _teleportStart.setZero();
+      _teleportExitStart.setZero();
+      return;
+    }
+    _isTeleporting = false;
+    _teleportTimer = 0;
+    _teleportEntryDuration = 0;
+    _teleportExitDuration = 0;
+    _teleportWarped = false;
+    _teleportEntryOffset.setZero();
+    _teleportExitOffset.setZero();
+    _teleportStart.setZero();
+    _teleportExitStart.setZero();
+    opacity = 1;
+  }
+
   void jump() {
+    if (_isTeleporting) {
+      return;
+    }
     if (_isOnGround) {
       _velocity.y = -_jumpSpeed;
       _isOnGround = false;
@@ -1295,6 +1537,7 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   }
 
   void respawn() {
+    _cancelTeleport();
     position.setFrom(_spawnPoint);
     _previousPosition.setFrom(_spawnPoint);
     _velocity.setZero();
@@ -1313,6 +1556,9 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   }
 
   bool applyEnemyHit(Rect enemyBounds) {
+    if (_isTeleporting) {
+      return false;
+    }
     if (_invulnerabilityTimer > 0) {
       return false;
     }
@@ -1342,6 +1588,7 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   }
 
   void teleportTo(Vector2 destination) {
+    _cancelTeleport();
     position.setFrom(destination);
     _previousPosition.setFrom(destination);
     _velocity.setZero();
@@ -1349,6 +1596,9 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
   }
 
   void _applyPhysics(double dt) {
+    if (_isTeleporting) {
+      return;
+    }
     _velocity.y += gameRef.gravity.y * dt;
     _velocity.x = horizontalInput * _moveSpeed;
 
@@ -1374,6 +1624,37 @@ class Player extends PositionComponent with HasGameRef<CutePlatformerGame> {
           position.x = platform.bounds.right;
         }
         _velocity.x = 0;
+      }
+    }
+
+    for (final tunnel in gameRef.tunnels) {
+      final currentBounds = bounds;
+      if (currentBounds.bottom <= tunnel.bodyRect.top + 2) {
+        continue;
+      }
+
+      if (_velocity.x > 0) {
+        final wall = tunnel.leftWallRect;
+        if (wall.width > 0 &&
+            currentBounds.right > wall.left &&
+            currentBounds.left < wall.right &&
+            currentBounds.bottom > wall.top &&
+            currentBounds.top < wall.bottom) {
+          position.x = wall.left - size.x;
+          _velocity.x = 0;
+          continue;
+        }
+      } else if (_velocity.x < 0) {
+        final wall = tunnel.rightWallRect;
+        if (wall.width > 0 &&
+            currentBounds.left < wall.right &&
+            currentBounds.right > wall.left &&
+            currentBounds.bottom > wall.top &&
+            currentBounds.top < wall.bottom) {
+          position.x = wall.right;
+          _velocity.x = 0;
+          continue;
+        }
       }
     }
   }
@@ -1652,6 +1933,9 @@ class TunnelPipe extends PositionComponent
     this.entryInset = const EdgeInsets.fromLTRB(12, 14, 12, 6),
     this.cooldownDuration = 0.6,
     this.label,
+    this.linkId,
+    this.rememberEntryPosition = false,
+    this.returnToRememberedEntry = false,
   })  : _opacity = 1,
         super(
           position: position,
@@ -1665,6 +1949,9 @@ class TunnelPipe extends PositionComponent
   final EdgeInsets entryInset;
   final double cooldownDuration;
   final String? label;
+  final String? linkId;
+  final bool rememberEntryPosition;
+  final bool returnToRememberedEntry;
 
   double _cooldown = 0;
   double _opacity;
@@ -1677,6 +1964,23 @@ class TunnelPipe extends PositionComponent
         size.y - entryInset.vertical,
       );
 
+  Rect get bodyRect =>
+      Rect.fromLTWH(position.x, position.y, size.x, size.y);
+
+  Rect get leftWallRect => Rect.fromLTWH(
+        position.x,
+        position.y,
+        entryInset.left,
+        size.y,
+      );
+
+  Rect get rightWallRect => Rect.fromLTWH(
+        position.x + size.x - entryInset.right,
+        position.y,
+        entryInset.right,
+        size.y,
+      );
+
   @override
   void update(double dt) {
     super.update(dt);
@@ -1685,13 +1989,14 @@ class TunnelPipe extends PositionComponent
     }
 
     if (_containsPlayer &&
-        !gameRef.player.bounds.overlaps(openingRect)) {
+        (!gameRef.player.bounds.overlaps(openingRect) ||
+            gameRef.player.isTeleporting)) {
       _containsPlayer = false;
     }
   }
 
   bool canTeleport(Player player) {
-    if (_cooldown > 0) {
+    if (_cooldown > 0 || player.isTeleporting) {
       return false;
     }
     final rect = openingRect;
@@ -1706,42 +2011,62 @@ class TunnelPipe extends PositionComponent
     }
 
     if (!_containsPlayer) {
-      return false;
+      const entryTolerance = 14.0;
+      final enteredFromAbove =
+          player.previousBottom <= rect.top + entryTolerance &&
+              player.verticalVelocity >= 0;
+      if (!enteredFromAbove) {
+        return false;
+      }
+      _containsPlayer = true;
     }
 
     return true;
   }
 
   bool shouldBypassCollision(Player player, Rect platformRect) {
-    if (!platformRect.overlaps(openingRect)) {
+    if (player.isTeleporting) {
       return false;
     }
+
+    final opening = openingRect;
     final playerRect = player.bounds;
-    if (!playerRect.overlaps(openingRect)) {
+    const double horizontalAllowance = 6.0;
+    const double upperAllowance = 12.0;
+    final double lowerAllowance = entryInset.bottom + 12.0;
+
+    final Rect bypassRegion = Rect.fromLTRB(
+      opening.left - horizontalAllowance,
+      opening.top - upperAllowance,
+      opening.right + horizontalAllowance,
+      opening.bottom + lowerAllowance,
+    );
+
+    if (!platformRect.overlaps(bypassRegion)) {
+      if (!playerRect.overlaps(bypassRegion)) {
+        _containsPlayer = false;
+      }
+      return false;
+    }
+
+    if (!playerRect.overlaps(bypassRegion)) {
       _containsPlayer = false;
       return false;
     }
 
-    const horizontalPadding = 6.0;
-    final insideHorizontally =
-        playerRect.left >= openingRect.left - horizontalPadding &&
-        playerRect.right <= openingRect.right + horizontalPadding;
-
-    if (!insideHorizontally) {
-      _containsPlayer = false;
-      return false;
-    }
-
-    const entryTolerance = 12.0;
-    final enteringFromTop =
-        player.previousBottom <= openingRect.top + entryTolerance &&
+    final bool enteringFromTop =
+        player.previousBottom <= opening.top + upperAllowance &&
             player.verticalVelocity >= 0;
 
     if (enteringFromTop) {
       _containsPlayer = true;
     }
 
-    return _containsPlayer && player.verticalVelocity >= 0;
+    if (!_containsPlayer) {
+      return false;
+    }
+
+    return player.verticalVelocity >= 0;
   }
 
   void triggerCooldown() {
@@ -1759,6 +2084,20 @@ class TunnelPipe extends PositionComponent
         .clamp(bounds.top, bounds.bottom - playerSize.y)
         .toDouble();
     return resolved;
+  }
+
+  Vector2 surfaceReturnPosition(Vector2 playerSize) {
+    final bounds = gameRef.levelBounds;
+    final opening = openingRect;
+    final targetX = (opening.left + opening.right - playerSize.x) / 2;
+    final targetY = opening.top - playerSize.y + 2;
+    final clampedX = targetX
+        .clamp(bounds.left.toDouble(), bounds.right - playerSize.x)
+        .toDouble();
+    final clampedY = targetY
+        .clamp(bounds.top.toDouble(), bounds.bottom - playerSize.y)
+        .toDouble();
+    return Vector2(clampedX, clampedY);
   }
 
   @override
