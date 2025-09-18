@@ -361,7 +361,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           priority: -2,
         ),
         PlatformSpec(
-          position: Vector2(140, 360),
+          position: Vector2(140, 420),
           size: Vector2(150, 32),
           color: const Color(0xFFF0A6CA),
         ),
@@ -496,7 +496,7 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           color: const Color(0xFFFFC8DD),
         ),
         PlatformSpec(
-          position: Vector2(520, 440),
+          position: Vector2(520, 380),
           size: Vector2(200, 28),
           color: const Color(0xFFA0C4FF),
         ),
@@ -1237,6 +1237,17 @@ class CutePlatformerGame extends FlameGame with KeyboardEvents {
           destinationOverride ?? tunnel.resolveExitFor(_player.size);
       final travelDuration = _player.startTunnelTravel(tunnel, destination);
       tunnel.triggerCooldown();
+
+      if (destinationOverride != null && tunnel.linkId != null) {
+        for (final other in _tunnels) {
+          if (identical(other, tunnel)) {
+            continue;
+          }
+          if (other.linkId == tunnel.linkId) {
+            other.triggerCooldown();
+          }
+        }
+      }
 
       if (tunnel.returnToRememberedEntry && tunnel.linkId != null) {
         _storedTunnelEntries.remove(tunnel.linkId!);
@@ -2089,14 +2100,27 @@ class TunnelPipe extends PositionComponent
   Vector2 surfaceReturnPosition(Vector2 playerSize) {
     final bounds = gameRef.levelBounds;
     final opening = openingRect;
-    final targetX = (opening.left + opening.right - playerSize.x) / 2;
-    final targetY = opening.top - playerSize.y + 2;
-    final clampedX = targetX
+    const double exitGap = 12.0;
+    final double leftCandidate = opening.left - playerSize.x - exitGap;
+    final double rightCandidate = opening.right + exitGap;
+
+    double targetX;
+    if (leftCandidate >= bounds.left) {
+      targetX = leftCandidate;
+    } else if (rightCandidate + playerSize.x <= bounds.right) {
+      targetX = rightCandidate;
+    } else {
+      targetX = (opening.left + opening.right - playerSize.x) / 2;
+    }
+
+    final double targetY = position.y - playerSize.y;
+    final double clampedX = targetX
         .clamp(bounds.left.toDouble(), bounds.right - playerSize.x)
         .toDouble();
-    final clampedY = targetY
+    final double clampedY = targetY
         .clamp(bounds.top.toDouble(), bounds.bottom - playerSize.y)
         .toDouble();
+
     return Vector2(clampedX, clampedY);
   }
 
